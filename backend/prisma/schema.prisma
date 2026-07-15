@@ -1,0 +1,90 @@
+// Prisma Schema - Toàn bộ tính toàn vẹn dữ liệu được quản lý ở DBMS
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String        @id @default(uuid())
+  email         String        @unique
+  passwordHash  String
+  fullName      String
+  roleId        String
+  role          Role          @relation(fields: [roleId], references: [id])
+  departmentId  String
+  department    Department    @relation(fields: [departmentId], references: [id])
+  documents     Document[]
+  actions       DocumentLog[]
+  createdAt     DateTime      @default(now())
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique // "Staff", "Dept_Head", "Director", "Accountant"
+  permissions String[]
+  users       User[]
+}
+
+model Department {
+  id    String @id @default(uuid())
+  name  String @unique
+  users User[]
+}
+
+model Document {
+  id             String        @id @default(uuid())
+  title          String
+  type           String        // "PURCHASE", "PAYMENT", "GENERAL"
+  formData       Json          // Lưu trữ dữ liệu Form động dưới dạng JSONB
+  status         String        // "DRAFT", "PENDING", "APPROVED", "REJECTED", "CHANGES_REQUESTED"
+  creatorId      String
+  creator        User          @relation(fields: [creatorId], references: [id])
+  currentStep    Int           @default(1)
+  workflowId     String
+  workflow       Workflow      @relation(fields: [workflowId], references: [id])
+  attachments    Attachment[]
+  logs           DocumentLog[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Attachment {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fileName   String   // Tên file gốc (ví dụ: "De_xuat_mua_cap.pdf")
+  fileUrl    String   // Đường dẫn lưu file vật lý đã mã hóa UUID trên Ubuntu
+  mimeType   String
+  createdAt  DateTime @default(now())
+}
+
+model Workflow {
+  id          String         @id @default(uuid())
+  name        String
+  description String?
+  steps       WorkflowStep[]
+  documents   Document[]
+}
+
+model WorkflowStep {
+  id          String   @id @default(uuid())
+  workflowId  String
+  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepOrder   Int      // Thứ tự bước (1, 2, 3...)
+  approverRole String  // Vai trò được quyền duyệt bước này (ví dụ: "Dept_Head")
+}
+
+model DocumentLog {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String   // "SUBMIT", "APPROVE", "REJECT", "REQUEST_CHANGE", "COMMENT"
+  comment    String?  // Ghi nhận ý kiến phản hồi
+  createdAt  DateTime @default(now())
+}
