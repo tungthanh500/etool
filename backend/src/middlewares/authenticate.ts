@@ -20,16 +20,20 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     return;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    include: { role: true, department: true },
-  });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { role: true, department: true },
+    });
 
-  if (!user) {
-    res.status(401).json({ error: "Phiên đăng nhập không hợp lệ" });
-    return;
+    if (!user) {
+      res.status(401).json({ error: "Phiên đăng nhập không hợp lệ" });
+      return;
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    next(err);
   }
-
-  req.user = user;
-  next();
 }

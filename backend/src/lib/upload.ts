@@ -10,6 +10,8 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx"]);
 const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024; // 15MB
 const MAX_FILES_PER_REQUEST = 10;
+const MAX_FIELD_SIZE_BYTES = 2 * 1024 * 1024; // 2MB, đủ cho formData JSON tự do
+const MAX_TEXT_FIELDS = 20;
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -26,6 +28,8 @@ export const upload = multer({
   limits: {
     fileSize: MAX_FILE_SIZE_BYTES,
     files: MAX_FILES_PER_REQUEST,
+    fieldSize: MAX_FIELD_SIZE_BYTES,
+    fields: MAX_TEXT_FIELDS,
   },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();

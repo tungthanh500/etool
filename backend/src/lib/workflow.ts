@@ -2,6 +2,7 @@ import type { Document, DocumentLog, Role, User, WorkflowStep } from "@prisma/cl
 
 type DocumentWithWorkflow = Document & {
   workflow: { steps: WorkflowStep[] };
+  creator: { departmentId: string };
   logs?: DocumentLog[];
 };
 
@@ -11,9 +12,16 @@ export function getCurrentWorkflowStep(document: DocumentWithWorkflow): Workflow
   return document.workflow.steps.find((s) => s.stepOrder === document.currentStep);
 }
 
+// Dept_Head chỉ được duyệt hồ sơ của người tạo cùng phòng ban với mình —
+// tránh trưởng phòng A duyệt nhầm/chéo hồ sơ của phòng ban B chỉ vì trùng role.name.
 export function isCurrentApprover(document: DocumentWithWorkflow, user: AuthUser): boolean {
   if (document.status !== "PENDING") return false;
-  return getCurrentWorkflowStep(document)?.approverRole === user.role.name;
+  const step = getCurrentWorkflowStep(document);
+  if (!step || step.approverRole !== user.role.name) return false;
+  if (step.approverRole === "Dept_Head") {
+    return document.creator.departmentId === user.departmentId;
+  }
+  return true;
 }
 
 export function canViewDocument(

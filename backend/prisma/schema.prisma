@@ -20,6 +20,9 @@ model User {
   documents     Document[]
   actions       DocumentLog[]
   createdAt     DateTime      @default(now())
+
+  @@index([roleId])
+  @@index([departmentId])
 }
 
 model Role {
@@ -50,6 +53,10 @@ model Document {
   logs           DocumentLog[]
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+
+  @@index([creatorId])
+  @@index([workflowId])
+  @@index([status])
 }
 
 model Attachment {
@@ -60,6 +67,8 @@ model Attachment {
   fileUrl    String   // Đường dẫn lưu file vật lý đã mã hóa UUID trên Ubuntu
   mimeType   String
   createdAt  DateTime @default(now())
+
+  @@index([documentId])
 }
 
 model Workflow {
@@ -71,11 +80,13 @@ model Workflow {
 }
 
 model WorkflowStep {
-  id          String   @id @default(uuid())
-  workflowId  String
-  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  stepOrder   Int      // Thứ tự bước (1, 2, 3...)
-  approverRole String  // Vai trò được quyền duyệt bước này (ví dụ: "Dept_Head")
+  id           String   @id @default(uuid())
+  workflowId   String
+  workflow     Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepOrder    Int      // Thứ tự bước (1, 2, 3...)
+  approverRole String   // Vai trò được quyền duyệt bước này (ví dụ: "Dept_Head")
+
+  @@index([workflowId])
 }
 
 model DocumentLog {
@@ -87,4 +98,7 @@ model DocumentLog {
   action     String   // "SUBMIT", "APPROVE", "REJECT", "REQUEST_CHANGE", "COMMENT"
   comment    String?  // Ghi nhận ý kiến phản hồi
   createdAt  DateTime @default(now())
+
+  @@index([documentId])
+  @@index([userId])
 }

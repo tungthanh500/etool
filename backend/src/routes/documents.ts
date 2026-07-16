@@ -11,7 +11,7 @@ import { canViewDocument, isCurrentApprover } from "../lib/workflow";
 
 const router = Router();
 
-const SAFE_CREATOR_SELECT = { id: true, fullName: true, email: true } as const;
+const SAFE_CREATOR_SELECT = { id: true, fullName: true, email: true, departmentId: true } as const;
 
 const DOCUMENT_INCLUDE = {
   attachments: true,
@@ -31,6 +31,7 @@ router.post(
   authorize("document:create"),
   upload.array("attachments", 10),
   async (req, res, next) => {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
     try {
       const parsed = createDocumentSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -54,8 +55,6 @@ router.post(
       if (!workflow) {
         throw new AppError(500, `Chưa cấu hình quy trình duyệt cho loại văn bản "${type}"`);
       }
-
-      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
 
       const document = await prisma.$transaction(async (tx) => {
         return tx.document.create({
@@ -87,6 +86,13 @@ router.post(
 
       res.status(201).json({ ...document, canApprove: isCurrentApprover(document, req.user!) });
     } catch (err) {
+      // Multer đã ghi file lên đĩa trước khi handler chạy — nếu bất kỳ bước nào
+      // sau đó thất bại (validate, workflow thiếu, lỗi DB), phải dọn file rác.
+      for (const file of files) {
+        fs.unlink(file.path, (unlinkErr) => {
+          if (unlinkErr) console.error(`Lỗi xóa file mồ côi: ${file.path}`, unlinkErr);
+        });
+      }
       next(err);
     }
   },
@@ -205,9 +211,11 @@ router.post("/:id/approve", authenticate, async (req, res, next) => {
 
     const nextStep = document.workflow.steps.find((s) => s.stepOrder === document.currentStep + 1);
 
+    // where kèm currentStep+status: nếu hồ sơ đã bị request khác xử lý trước,
+    // điều kiện không khớp nữa và Prisma ném P2025 thay vì ghi đè âm thầm.
     const updated = await prisma.$transaction(async (tx) => {
       const doc = await tx.document.update({
-        where: { id: document.id },
+        where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: nextStep ? { currentStep: document.currentStep + 1 } : { status: "APPROVED" },
         include: { ...DOCUMENT_INCLUDE, logs: true },
       });
@@ -238,7 +246,7 @@ router.post("/:id/reject", authenticate, async (req, res, next) => {
 
     const updated = await prisma.$transaction(async (tx) => {
       const doc = await tx.document.update({
-        where: { id: document.id },
+        where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: { status: "REJECTED" },
         include: { ...DOCUMENT_INCLUDE, logs: true },
       });
@@ -269,7 +277,7 @@ router.post("/:id/request-change", authenticate, async (req, res, next) => {
 
     const updated = await prisma.$transaction(async (tx) => {
       const doc = await tx.document.update({
-        where: { id: document.id },
+        where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: { status: "CHANGES_REQUESTED" },
         include: { ...DOCUMENT_INCLUDE, logs: true },
       });
@@ -305,7 +313,7 @@ router.post("/:id/resubmit", authenticate, async (req, res, next) => {
 
     const updated = await prisma.$transaction(async (tx) => {
       const doc = await tx.document.update({
-        where: { id: document.id },
+        where: { id: document.id, status: "CHANGES_REQUESTED" },
         data: { status: "PENDING" },
         include: { ...DOCUMENT_INCLUDE, logs: true },
       });
