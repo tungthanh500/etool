@@ -22,6 +22,13 @@ const USERS: { email: string; fullName: string; roleName: string; departmentName
   { email: "accountant@example.com", fullName: "Phạm Thị Kế Toán", roleName: "Accountant", departmentName: "Phòng Hành chính - Kế toán" },
 ];
 
+// Workflow.name quy ước trùng với Document.type để route tạo document tra cứu trực tiếp.
+const WORKFLOWS: { name: string; description: string; steps: string[] }[] = [
+  { name: "GENERAL", description: "Trình duyệt văn bản chung", steps: ["Dept_Head", "Director"] },
+  { name: "PURCHASE", description: "Yêu cầu mua sắm vật tư", steps: ["Dept_Head", "Director"] },
+  { name: "PAYMENT", description: "Đề xuất thanh toán", steps: ["Dept_Head", "Accountant", "Director"] },
+];
+
 async function main() {
   for (const role of ROLES) {
     await prisma.role.upsert({
@@ -55,6 +62,27 @@ async function main() {
         roleId: role.id,
         departmentId: department.id,
       },
+    });
+  }
+
+  for (const wf of WORKFLOWS) {
+    let workflow = await prisma.workflow.findFirst({ where: { name: wf.name } });
+    if (!workflow) {
+      workflow = await prisma.workflow.create({ data: { name: wf.name, description: wf.description } });
+    } else {
+      await prisma.workflow.update({
+        where: { id: workflow.id },
+        data: { description: wf.description },
+      });
+      await prisma.workflowStep.deleteMany({ where: { workflowId: workflow.id } });
+    }
+
+    await prisma.workflowStep.createMany({
+      data: wf.steps.map((approverRole, index) => ({
+        workflowId: workflow!.id,
+        stepOrder: index + 1,
+        approverRole,
+      })),
     });
   }
 }
