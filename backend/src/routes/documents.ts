@@ -228,16 +228,17 @@ router.post("/:id/approve", authenticate, async (req, res, next) => {
 
     // where kèm currentStep+status: nếu hồ sơ đã bị request khác xử lý trước,
     // điều kiện không khớp nữa và Prisma ném P2025 thay vì ghi đè âm thầm.
+    // Ghi log trước rồi mới update+include: nếu làm ngược lại, include.logs sẽ
+    // chụp ảnh trước khi log này tồn tại, khiến response thiếu đúng entry vừa tạo.
     const updated = await prisma.$transaction(async (tx) => {
-      const doc = await tx.document.update({
+      await tx.documentLog.create({
+        data: { documentId: document.id, userId: req.user!.id, action: "APPROVE", comment: parsed.data.comment },
+      });
+      return tx.document.update({
         where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: nextStep ? { currentStep: document.currentStep + 1 } : { status: "APPROVED" },
         include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
-      await tx.documentLog.create({
-        data: { documentId: document.id, userId: req.user!.id, action: "APPROVE", comment: parsed.data.comment },
-      });
-      return doc;
     });
 
     notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
@@ -267,15 +268,14 @@ router.post("/:id/reject", authenticate, async (req, res, next) => {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const doc = await tx.document.update({
+      await tx.documentLog.create({
+        data: { documentId: document.id, userId: req.user!.id, action: "REJECT", comment: parsed.data.comment },
+      });
+      return tx.document.update({
         where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: { status: "REJECTED" },
         include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
-      await tx.documentLog.create({
-        data: { documentId: document.id, userId: req.user!.id, action: "REJECT", comment: parsed.data.comment },
-      });
-      return doc;
     });
 
     notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
@@ -305,11 +305,6 @@ router.post("/:id/request-change", authenticate, async (req, res, next) => {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const doc = await tx.document.update({
-        where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
-        data: { status: "CHANGES_REQUESTED" },
-        include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
-      });
       await tx.documentLog.create({
         data: {
           documentId: document.id,
@@ -318,7 +313,11 @@ router.post("/:id/request-change", authenticate, async (req, res, next) => {
           comment: parsed.data.comment,
         },
       });
-      return doc;
+      return tx.document.update({
+        where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
+        data: { status: "CHANGES_REQUESTED" },
+        include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
+      });
     });
 
     notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
@@ -348,15 +347,14 @@ router.post("/:id/resubmit", authenticate, async (req, res, next) => {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const doc = await tx.document.update({
+      await tx.documentLog.create({
+        data: { documentId: document.id, userId: req.user!.id, action: "SUBMIT", comment: parsed.data.comment },
+      });
+      return tx.document.update({
         where: { id: document.id, status: "CHANGES_REQUESTED" },
         data: { status: "PENDING" },
         include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
-      await tx.documentLog.create({
-        data: { documentId: document.id, userId: req.user!.id, action: "SUBMIT", comment: parsed.data.comment },
-      });
-      return doc;
     });
 
     notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
