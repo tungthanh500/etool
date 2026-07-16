@@ -560,3 +560,87 @@ Không có sai lệch — đúng như thiết kế trong Context/kế hoạch, t
 
 ### Bước tiếp theo
 Bước 6 (Thông báo realtime qua WebSocket & Web Push) là hạng mục cuối cùng theo lộ trình gốc, chưa bắt đầu. Việc đồng bộ code lên GitHub (tạo repo private qua `gh`) cũng đang tạm hoãn theo yêu cầu người dùng — `gh auth login` chưa hoàn tất xác thực, 5 commit Bước 1→4.5 đã sẵn sàng ở local, chờ push khi được yêu cầu tiếp tục.
+
+---
+
+# Bước 6 — Thông báo Realtime (WebSocket)
+
+## Context
+Người dùng xác nhận muốn tiếp tục Bước 6 theo đúng lộ trình gốc, **chưa xây frontend UI thật** (đã hỏi và người dùng chọn không xây UI lúc này). Roadmap gốc ghi Bước 6 gồm 2 phần: "Realtime (WebSocket)" và "Web Push".
+
+**Phát hiện cần điều chỉnh phạm vi:** Web Push (theo chuẩn W3C Push API) **về bản chất không thể triển khai lẫn kiểm thử có ý nghĩa nếu không có một trang trình duyệt thật** — nó đòi hỏi: Service Worker chạy trên origin của frontend, người dùng cấp quyền `Notification` qua UI trình duyệt, và trình duyệt tự đăng ký `PushSubscription` với dịch vụ đẩy của Google/Mozilla. Không có cách nào để tôi (Claude Code, chạy lệnh qua Bash) tạo hộ một "browser subscription" hợp lệ bằng curl/Node script — đây là giới hạn kỹ thuật cứng, không phải lựa chọn tuỳ ý. Vì người dùng vừa chủ động hoãn xây frontend, Web Push chưa có "nơi" để tồn tại một cách có ý nghĩa (giống hệt lý do trước đó đã hoãn màn hình login ở Bước 2-3).
+
+→ **Bước 6 lần này chỉ làm WebSocket** (thông báo tức thời khi tab đang mở — phần hoàn toàn có thể xây và kiểm thử bằng backend/script, không cần trình duyệt thật). Web Push sẽ để dành làm cùng lúc với khi frontend UI thật được xây (đặt tên "Bước 6b" khi đó), nêu rõ trong "Lưu ý" để không ngộ nhận đã xong toàn bộ Bước 6 theo PLAN.md.
+
+### Quyết định kỹ thuật
+- **Thư viện: `ws`** (không dùng `socket.io`) — không cần room/namespace/reconnection phức tạp, giữ đúng tinh thần tối giản đã áp dụng xuyên suốt dự án (không thêm abstraction khi chưa cần).
+- **Xác thực kết nối WebSocket**: dùng `verifyClient` (callback bất đồng bộ của `ws`) để từ chối handshake **trước khi upgrade** nếu cookie JWT không hợp lệ — đọc cookie thô từ header (parser tự viết 3 dòng cho đúng 1 cookie cần dùng, không thêm dependency `cookie`), tái dùng `verifyToken()` (`lib/jwt.ts`) + `prisma.user.findUnique` (cùng logic với `authenticate` middleware nhưng viết lại cho ngữ cảnh non-Express). UserId xác thực được gắn tạm vào `req` (đối tượng handshake) để đọc lại ở sự kiện `connection`.
+- **Registry kết nối trong bộ nhớ**: `Map<userId, Set<WebSocket>>` (1 user có thể mở nhiều tab/thiết bị) — đủ dùng cho MVP một tiến trình Node duy nhất, không cần Redis pub/sub (chỉ cần nếu chạy nhiều instance sau này).
+- **Helper dùng chung `getNotifiableUserIds(document)`** (`src/lib/notifications.ts`): trả về danh sách `userId` cần báo — luôn gồm `creator.id` + tất cả `userId` đã từng xuất hiện trong `logs` (tái dùng đúng tinh thần "đã từng thao tác" của `canViewDocument`), và nếu `status === "PENDING"` thì cộng thêm toàn bộ user có `role.name` khớp `approverRole` ở bước hiện tại (nếu là `Dept_Head`, lọc thêm đúng `departmentId` của người tạo — nhất quán với `isCurrentApprover`). Loại trừ chính người vừa thực hiện hành động (không cần tự báo cho mình).
+- **Payload sự kiện tối giản**: `{ type, documentId, title, actorName }` — đủ để một client tương lai quyết định hiển thị gì, không thiết kế trước cấu trúc UI cụ thể vì chưa có frontend.
+
+## Kế hoạch triển khai
+
+### 1. Cài dependency
+`ws` (dependency), `@types/ws` (devDependency).
+
+### 2. `src/lib/ws.ts` (mới)
+- `initWebSocket(server: http.Server)`: tạo `WebSocketServer({ server, verifyClient })`; `verifyClient` parse cookie → `verifyToken` → `prisma.user.findUnique` → `callback(true)`/`callback(false, 401, "Unauthorized")`.
+- Sự kiện `connection`: lấy `userId` đã xác thực, thêm socket vào registry; `close` thì gỡ khỏi registry.
+- `notifyUsers(userIds: string[], event: object)`: với mỗi `userId` có socket đang mở, `ws.send(JSON.stringify(event))`.
+
+### 3. `src/lib/notifications.ts` (mới)
+- `getNotifiableUserIds(document, excludeUserId)` như mô tả ở "Quyết định kỹ thuật".
+
+### 4. Sửa `src/index.ts`
+- Đổi `app.listen(...)` để giữ lại biến `server` (`http.Server`), gọi `initWebSocket(server)` ngay sau đó.
+
+### 5. Sửa `src/routes/documents.ts`
+Sau khi mỗi hành động thành công (trước khi `res.json`/`res.status().json`), gọi `notifyUsers(getNotifiableUserIds(document, req.user!.id), { type: "...", documentId, title, actorName: req.user!.fullName })` cho: tạo mới (`document:created`), approve (`document:approved` hoặc `document:step_advanced` tuỳ còn bước hay hết), reject (`document:rejected`), request-change (`document:changes_requested`), resubmit (`document:resubmitted`), comment (`document:commented`).
+
+## Kiểm thử / Verification
+1. `npx tsc --noEmit` sạch.
+2. Viết script test tạm (`/tmp/ws-test.js`, dùng package `ws` làm client — không phải phần code chính thức của dự án) để mô phỏng trình duyệt:
+   - Login qua HTTP lấy cookie → kết nối `ws://localhost:4000` kèm header `Cookie` → xác nhận kết nối thành công.
+   - Kết nối **không kèm cookie** → xác nhận bị từ chối (đóng kết nối, không upgrade thành công).
+3. Mở đồng thời 2 kết nối WS đã xác thực (`depthead`, `director`), rồi qua `curl` (shell khác):
+   - `staff` tạo document `GENERAL` → xác nhận `depthead` (đang kết nối) nhận được message `document:created` ngay lập tức; `director` không nhận (chưa tới bước).
+   - `depthead` approve → xác nhận `director` nhận `document:approved`/tương đương; `depthead` (người vừa hành động) không tự nhận lại.
+   - `staff` comment → xác nhận `depthead` (đã từng thao tác) nhận `document:commented`.
+4. Dừng backend dev server và các script test tạm sau khi xong; giữ Postgres container chạy.
+
+## Lưu ý
+- **Web Push (Bước 6b) chưa làm** — cần frontend UI thật (Service Worker + xin quyền Notification) mới có ý nghĩa và kiểm thử được; sẽ làm cùng lúc khi xây frontend nếu người dùng yêu cầu.
+- Registry kết nối chỉ ở bộ nhớ tiến trình hiện tại — nếu sau này chạy nhiều instance backend (scale ngang), cần chuyển sang pub/sub tập trung (Redis) để các instance đồng bộ được ai đang online ở đâu; không cần thiết cho MVP một server.
+
+---
+
+## Kết quả thực thi Bước 6 (2026-07-16)
+
+> ✅ **TRẠNG THÁI: Bước 6 (WebSocket) đã hoàn thành và kiểm thử. Web Push (6b) hoãn lại, chờ frontend.**
+
+### Những gì đã tạo ra thực tế
+- Cài mới: `ws` (dependency), `@types/ws` (devDependency).
+- `src/lib/ws.ts` (mới): `initWebSocket(server)` tạo `WebSocketServer({server, verifyClient})` — `verifyClient` tự parse cookie thô từ header, `verifyToken` + `prisma.user.findUnique`, gắn `authenticatedUserId` vào `req` handshake để đọc lại ở `connection`. Registry `Map<userId, Set<WebSocket>>`, tự dọn khi `close`. `notifyUsers(userIds, event)` gửi JSON tới mọi socket đang mở của các user đó.
+- `src/lib/notifications.ts` (mới): `getNotifiableUserIds(document, excludeUserId)` — hợp `creatorId` + toàn bộ `userId` trong `logs` + (nếu `PENDING`) toàn bộ user khớp `approverRole` ở bước hiện tại (lọc thêm `departmentId` nếu là `Dept_Head`), loại trừ actor.
+- `src/index.ts`: giữ lại biến `server` từ `app.listen(...)`, gọi `initWebSocket(server)`.
+- `src/routes/documents.ts`: gọi `notifyUsers(await getNotifiableUserIds(...), {...})` ở đúng 6 điểm — tạo (`document:created`), approve (`document:approved`/`document:step_advanced`), reject (`document:rejected`), request-change (`document:changes_requested`), resubmit (`document:resubmitted`), comment (`document:commented`).
+
+### Phát sinh / điều chỉnh so với kế hoạch
+Không có sai lệch kỹ thuật — đúng thiết kế. Việc thu hẹp phạm vi (bỏ Web Push khỏi lượt này) đã được quyết định và nêu rõ ngay trong giai đoạn lập kế hoạch (không phải phát sinh giữa chừng).
+
+### Kết quả kiểm thử (toàn bộ PASS)
+- `npx tsc --noEmit` sạch.
+- Viết script test tạm `/tmp/ws-test.js` (client `ws`, không phải code chính thức, đã xoá sau khi test) để mô phỏng trình duyệt:
+  - Kết nối **không kèm cookie** → `ERROR: Unexpected server response: 401`, `CLOSED code=1006` — xác nhận `verifyClient` chặn đúng trước khi upgrade thành công.
+  - Kết nối kèm cookie hợp lệ (`depthead`) → `CONNECTED` thành công.
+- Luồng thông báo đầy đủ (3-4 kết nối WS mở song song + hành động qua `curl` ở shell khác):
+  - `staff` tạo document `GENERAL` → `depthead` (đang kết nối) nhận `document:created` ngay lập tức; `director` (chưa tới bước) không nhận gì; `staff` (chính actor) không tự nhận lại.
+  - `depthead` approve (chuyển bước) → `director` nhận `document:step_advanced`; `depthead` (actor) không tự nhận.
+  - `director` comment → `depthead` (đã từng thao tác — approve trước đó) và `staff` (chủ sở hữu) đều nhận `document:commented`; `director` (actor) không tự nhận.
+- Đã dừng backend dev server, xoá script test tạm và toàn bộ file tạm sau khi test; Postgres container vẫn `Up ... (healthy)`.
+
+### Bước tiếp theo
+Đây là bước cuối cùng theo lộ trình 6 bước gốc trong `PLAN.md` (trừ Web Push — 6b, chờ frontend). Còn lại 2 hạng mục mở, tuỳ người dùng chọn khi muốn tiếp tục:
+1. **Xây frontend UI thật** (login, danh sách văn bản, duyệt hồ sơ, kết nối WebSocket nhận thông báo, và làm luôn Web Push/6b khi đó).
+2. **Đồng bộ code lên GitHub** — `gh auth login` vẫn chưa hoàn tất xác thực từ phía người dùng; hiện có 7 commit sẵn sàng ở local (Bước 1→6), chưa push.

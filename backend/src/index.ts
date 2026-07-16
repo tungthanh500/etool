@@ -7,6 +7,7 @@ import healthRouter from "./routes/health";
 import authRouter from "./routes/auth";
 import documentsRouter from "./routes/documents";
 import { AppError } from "./lib/errors";
+import { initWebSocket } from "./lib/ws";
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
@@ -41,6 +42,8 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: "Đã xảy ra lỗi máy chủ" });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Backend server listening on port ${PORT}`);
 });
+
+initWebSocket(server);

@@ -8,6 +8,8 @@ import { AppError } from "../lib/errors";
 import { authenticate } from "../middlewares/authenticate";
 import { authorize } from "../middlewares/authorize";
 import { canViewDocument, isCurrentApprover } from "../lib/workflow";
+import { getNotifiableUserIds } from "../lib/notifications";
+import { notifyUsers } from "../lib/ws";
 
 const router = Router();
 
@@ -88,6 +90,13 @@ router.post(
           },
           include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
         });
+      });
+
+      notifyUsers(await getNotifiableUserIds(document, req.user!.id), {
+        type: "document:created",
+        documentId: document.id,
+        title: document.title,
+        actorName: req.user!.fullName,
       });
 
       res.status(201).json({ ...document, canApprove: isCurrentApprover(document, req.user!) });
@@ -231,6 +240,13 @@ router.post("/:id/approve", authenticate, async (req, res, next) => {
       return doc;
     });
 
+    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+      type: updated.status === "APPROVED" ? "document:approved" : "document:step_advanced",
+      documentId: updated.id,
+      title: updated.title,
+      actorName: req.user!.fullName,
+    });
+
     res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
   } catch (err) {
     next(err);
@@ -260,6 +276,13 @@ router.post("/:id/reject", authenticate, async (req, res, next) => {
         data: { documentId: document.id, userId: req.user!.id, action: "REJECT", comment: parsed.data.comment },
       });
       return doc;
+    });
+
+    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+      type: "document:rejected",
+      documentId: updated.id,
+      title: updated.title,
+      actorName: req.user!.fullName,
     });
 
     res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
@@ -298,6 +321,13 @@ router.post("/:id/request-change", authenticate, async (req, res, next) => {
       return doc;
     });
 
+    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+      type: "document:changes_requested",
+      documentId: updated.id,
+      title: updated.title,
+      actorName: req.user!.fullName,
+    });
+
     res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
   } catch (err) {
     next(err);
@@ -329,6 +359,13 @@ router.post("/:id/resubmit", authenticate, async (req, res, next) => {
       return doc;
     });
 
+    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+      type: "document:resubmitted",
+      documentId: updated.id,
+      title: updated.title,
+      actorName: req.user!.fullName,
+    });
+
     res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
   } catch (err) {
     next(err);
@@ -353,6 +390,13 @@ router.post("/:id/comments", authenticate, async (req, res, next) => {
         comment: parsed.data.comment,
       },
       include: { user: { select: SAFE_CREATOR_SELECT } },
+    });
+
+    notifyUsers(await getNotifiableUserIds(document, req.user!.id), {
+      type: "document:commented",
+      documentId: document.id,
+      title: document.title,
+      actorName: req.user!.fullName,
     });
 
     res.status(201).json(log);
