@@ -851,6 +851,27 @@ Trong `approve`/`reject`/`request-change`/`resubmit`, thứ tự hiện tại l�
 
 ---
 
+## Kết quả thực thi Bước 9 (2026-07-16)
+
+> ✅ **TRẠNG THÁI: Bước 9 (fix bug logs) đã hoàn thành và kiểm thử.**
+
+### Sửa ra thực tế
+`src/routes/documents.ts`: đảo thứ tự trong cả 4 transaction (`approve`/`reject`/`request-change`/`resubmit`) — `tx.documentLog.create(...)` chạy **trước**, `tx.document.update({include: {..., logs}})` chạy sau và trả trực tiếp kết quả (`return tx.document.update(...)` thay vì gán biến `doc` rồi return riêng). Vì đây vẫn là 1 transaction, nếu `document.update` thất bại (P2025 do optimistic lock), toàn bộ transaction rollback nên `documentLog.create` đã chạy trước đó cũng bị huỷ theo — không tạo ra log mồ côi.
+
+### Kết quả kiểm thử (toàn bộ PASS)
+- `tsc --noEmit` sạch.
+- `approve`: response tức thời có `logs: ['SUBMIT', 'APPROVE']` (trước đây thiếu `APPROVE`).
+- `reject`: `logs: ['SUBMIT', 'REJECT']`.
+- `request-change`: `logs: ['SUBMIT', 'REQUEST_CHANGE']`.
+- `resubmit`: `logs: ['SUBMIT', 'REQUEST_CHANGE', 'SUBMIT']`.
+- Smoke test luồng GENERAL đầy đủ (approve 2 bước tới `APPROVED`) → không regression, `logs` cuối cùng đúng `['SUBMIT', 'APPROVE', 'APPROVE']`.
+- Dừng dev server sau khi test; Postgres container vẫn chạy.
+
+### Bước tiếp theo
+Bước 8 (Web Push — 6b) là hạng mục cuối cùng theo roadmap trước khi GitHub sync.
+
+---
+
 ## Bước 10 — Đồng bộ code lên GitHub
 
 Không đổi kế hoạch — vẫn chờ người dùng hoàn tất `gh auth login` (đã cài `gh` CLI, đã dựng sẵn lịch sử commit theo từng bước ở local). Khi người dùng xác nhận đăng nhập xong, chỉ cần: `gh repo create --private`, thêm remote, `git push`.
