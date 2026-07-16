@@ -745,3 +745,150 @@ Viết lại `App.tsx`, `App.css`, `index.css`, `main.tsx` (bỏ toàn bộ boil
 1. **Web Push (6b)** — giờ đã có frontend thật, có thể triển khai: `web-push` + VAPID keys + model `PushSubscription` + Service Worker + nút "Bật thông báo".
 2. **Đồng bộ code lên GitHub** — vẫn đang chờ `gh auth login` hoàn tất từ phía người dùng.
 3. (Tuỳ chọn, không bắt buộc) Sửa bug nhỏ "logs chậm 1 nhịp" trong response tức thời của action endpoints, phát hiện khi test frontend.
+
+---
+
+# Roadmap hoàn thiện dự án (Bước 7-10)
+
+## Context
+Người dùng yêu cầu rà soát lại toàn bộ plan và thiết kế các bước còn lại tới khi hoàn thiện theo đúng phạm vi MVP của `PLAN.md`. Đối chiếu `PLAN.md` với thực tế đã làm:
+
+| Hạng mục PLAN.md | Trạng thái |
+| :--- | :--- |
+| Xác thực JWT HTTP-Only Cookie | ✅ Xong (Bước 2) |
+| Mô-đun Văn bản/Yêu cầu (JSONB, upload) | ✅ Xong (Bước 3) |
+| Workflow Engine | ✅ Xong (Bước 4, vá lỗi ở 4.5) |
+| Comment & Logs | ✅ Xong (Bước 5) |
+| Thông báo Realtime (WebSocket) | ✅ Xong (Bước 6) |
+| Thông báo Web Push | ⬜ Chưa làm (6b) |
+| "Thêm tính năng phân quyền user" (dòng dở trong PLAN.md) | ⬜ Chưa làm — đã hỏi lại, người dùng xác nhận: **trang quản trị user** (tạo/sửa user, gán role+phòng ban qua web, hiện chỉ làm được qua seed script) |
+| Đồng bộ code lên GitHub | ⬜ Đang chờ `gh auth login` từ người dùng |
+
+Còn phát hiện thêm 1 bug nhỏ khi test frontend (đã ghi trong "Kết quả thực thi Frontend UI"): response tức thời của `approve`/`reject`/`request-change`/`resubmit` thiếu đúng entry log vừa tạo (do thứ tự transaction), không ảnh hưởng dữ liệu DB, chỉ ảnh hưởng nhất thời phần hiển thị nếu có nơi nào dựa trực tiếp vào response đó — nên sửa dứt điểm cùng đợt.
+
+**Thứ tự thực hiện đề xuất:** Bước 7 (Quản trị user) → Bước 8 (Web Push) → Bước 9 (fix bug logs) → Bước 10 (GitHub, khi người dùng sẵn sàng). Mỗi bước vẫn theo đúng khuôn mẫu đã dùng suốt dự án: thiết kế → code → `tsc`/build → test thật (curl + browser) → cập nhật "Kết quả thực thi" → commit.
+
+---
+
+## Bước 7 — Trang quản trị User
+
+### Quyết định kỹ thuật
+- **Không tạo role "Admin" mới** — tái dùng role `Director` đã có (hợp lý nghiệp vụ: cấp cao nhất quản lý nhân sự), chỉ thêm permission mới `"user:manage"` vào `Role.permissions` của `Director` trong seed. Giữ đúng mô hình RBAC hiện có, không phát sinh khái niệm quyền song song.
+- **Phạm vi: Create + Read + Update, không làm Delete** — xoá user sẽ vi phạm ràng buộc khoá ngoại với `Document.creatorId`/`DocumentLog.userId` (Prisma mặc định `Restrict`, không cho xoá nếu còn tham chiếu) và cần xử lý side-effect phức tạp (soft-delete, vô hiệu hoá thay vì xoá cứng) — nằm ngoài phạm vi MVP, giữ nhất quán với quyết định "không làm Delete" đã áp dụng ở Document (Bước 3).
+- **Email không đổi được sau khi tạo** (MVP) — tránh phức tạp hoá việc kiểm tra trùng lặp khi update; nếu cần đổi email sau này có thể bổ sung riêng.
+- **Mật khẩu**: khi tạo user, admin nhập mật khẩu ban đầu trực tiếp (validate tối thiểu 8 ký tự qua zod); khi sửa, trường mật khẩu để trống nghĩa là giữ nguyên, có giá trị thì hash lại và ghi đè.
+
+### Kế hoạch triển khai
+**Backend:**
+1. `prisma/seed.ts`: thêm `"user:manage"` vào mảng permissions của `Director`.
+2. `src/routes/users.ts` (mới): `authenticate` + `authorize("user:manage")` cho toàn bộ route.
+   - `GET /` — danh sách user (select loại bỏ `passwordHash`, kèm `role`, `department`).
+   - `GET /:id` — chi tiết 1 user.
+   - `POST /` — zod validate (`email`, `fullName`, `password` min 8, `roleId`, `departmentId`) → `hashPassword` → `prisma.user.create` → bắt lỗi Prisma `P2002` (email trùng) → `409`.
+   - `PATCH /:id` — validate các field tuỳ chọn (`fullName`, `roleId`, `departmentId`, `password?`) → nếu có `password` thì hash lại → `prisma.user.update`.
+3. `src/routes/meta.ts` (mới): `GET /api/roles`, `GET /api/departments` — danh sách tra cứu cho dropdown trong form (cùng gate `authorize("user:manage")`, vì hiện chỉ trang admin dùng).
+4. Mount `/api/users`, `/api/roles`, `/api/departments` trong `src/index.ts`.
+
+**Frontend:**
+5. `src/pages/UserListPage.tsx` — bảng user (fullName/email/role/department), nút "+ Thêm user".
+6. `src/pages/UserFormPage.tsx` — dùng chung cho tạo mới (`/users/new`) và sửa (`/users/:id/edit`), dropdown role/department fetch từ `/api/roles`, `/api/departments`.
+7. `App.tsx`: thêm route `/users`, `/users/new`, `/users/:id/edit` (đều `ProtectedRoute`).
+8. `DocumentListPage.tsx`: thêm link "Quản lý user" trong header, chỉ hiện nếu `user.role.permissions.includes("user:manage")`.
+
+### Kiểm thử / Verification
+1. `tsc --noEmit` (backend) + `npm run build` (frontend) sạch.
+2. `curl`: `staff` gọi `GET /api/users` → `403`. `director` gọi → `200`, danh sách đúng, không có `passwordHash`.
+3. `director` tạo user mới qua `POST /api/users` → `201` → login thử bằng tài khoản vừa tạo → thành công.
+4. Tạo trùng email → `409`.
+5. `director` sửa role của 1 user qua `PATCH /api/users/:id` → xác nhận qua `psql`/GET lại.
+6. Test qua Chrome MCP thật (đã kết nối sẵn trong phiên): login `director`, vào `/users`, tạo user mới qua form, xác nhận xuất hiện trong danh sách.
+7. Dừng dev server, cập nhật "Kết quả thực thi", commit.
+
+---
+
+## Bước 8 — Web Push (6b)
+
+### Quyết định kỹ thuật
+- **`web-push`** (thư viện chuẩn Node cho Push API/VAPID) — sinh cặp khoá VAPID một lần (`web-push generate-vapid-keys`), lưu vào `.env` (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`) — không commit khoá thật vào `.env.example` (chỉ để placeholder).
+- **Model mới `PushSubscription`** (`userId`, `endpoint` @unique, `p256dh`, `auth`, `createdAt`) — migration mới, không đổi model khác.
+- **Gộp WS + Push vào 1 điểm gọi**: refactor `notifyUsers()` thành `notify()` trong `src/lib/notifications.ts` (hoặc file mới `src/lib/notify.ts`) gọi cả `notifyUsers` (WS, đã có) và `sendPushToUsers` (mới) — tránh phải sửa lặp lại cả 6 điểm gọi trong `documents.ts` thêm lần nữa.
+- **Tự dọn subscription hỏng**: nếu `webpush.sendNotification` trả lỗi `statusCode` 404/410 (subscription hết hạn/bị thu hồi), xoá luôn record đó khỏi DB — tránh tích rác theo thời gian.
+- **Frontend**: `public/service-worker.js` (lắng nghe `push`, gọi `showNotification`; `notificationclick` focus lại tab), hook `usePushNotifications()` đăng ký Service Worker + xin quyền + subscribe, nút "Bật thông báo" (chỉ hiện nếu `Notification.permission !== "granted"`).
+- **Khoá công khai VAPID lấy qua API** (`GET /api/push/public-key`, không cần đăng nhập) thay vì hardcode vào build frontend — đơn giản hoá quản lý cấu hình.
+
+### Kế hoạch triển khai
+**Backend:**
+1. Cài `web-push` (+ chạy CLI sinh cặp khoá VAPID, lưu vào `.env`/`.env.example` của backend).
+2. `prisma/schema.prisma`: thêm model `PushSubscription`, `npx prisma migrate dev --name add_push_subscription`.
+3. `src/routes/push.ts` (mới): `GET /public-key` (không cần auth), `POST /subscribe` (`authenticate`, upsert theo `endpoint`), `DELETE /subscribe` (`authenticate`, xoá theo `endpoint`).
+4. `src/lib/notify.ts` (mới, hoặc mở rộng `notifications.ts`): `sendPushToUsers(userIds, payload)` dùng `web-push`, tự xoá subscription hỏng.
+5. Sửa 6 điểm gọi `notifyUsers(...)` trong `documents.ts` thành gọi hàm `notify()` gộp cả WS+Push.
+
+**Frontend:**
+6. `public/service-worker.js`.
+7. `src/hooks/usePushNotifications.ts`: đăng ký SW, xin quyền, subscribe, POST subscription lên backend.
+8. Nút "Bật thông báo" trong `DocumentListPage.tsx` (hoặc header chung).
+
+### Kiểm thử / Verification
+1. `tsc --noEmit` + build frontend sạch. Migration áp dụng thành công.
+2. Test qua Chrome MCP thật (đã xác nhận khả dụng trong phiên này): đăng nhập, bấm "Bật thông báo", xác nhận trình duyệt hiện prompt xin quyền, chấp nhận, xác nhận `POST /subscribe` thành công (kiểm qua `psql` có record `PushSubscription`).
+3. Kích hoạt 1 sự kiện (vd. duyệt hồ sơ qua `curl` từ user khác) → xác nhận `web-push` gọi thành công (log phía server hoặc absence của lỗi) gửi tới subscription vừa tạo.
+4. **Giới hạn khách quan cần nêu rõ**: xác nhận toast/notification **hệ điều hành** thật sự hiện trên desktop Windows của người dùng nằm ngoài khả năng quan sát của tôi (notification hệ điều hành không nằm trong viewport trình duyệt) — sẽ báo rõ đã test được tới đâu (subscribe thành công + server gọi API push không lỗi) và đề nghị người dùng tự xác nhận phần hiển thị notification cuối cùng.
+5. Dừng dev server, cập nhật "Kết quả thực thi", commit.
+
+---
+
+## Bước 9 — Fix bug nhỏ: logs thiếu entry vừa tạo trong response tức thời
+
+### Nguyên nhân & cách sửa
+Trong `approve`/`reject`/`request-change`/`resubmit`, thứ tự hiện tại là `tx.document.update({include: {logs}})` **rồi mới** `tx.documentLog.create(...)` — nên `include.logs` trong kết quả trả về bị chụp ảnh trước khi log mới tồn tại. Sửa: đảo thứ tự — gọi `tx.documentLog.create(...)` **trước**, rồi mới `tx.document.update({include: {logs}})`, để `include` phản ánh đúng log vừa tạo (dữ liệu trong DB vốn đã đúng, chỉ là thứ tự đọc/ghi trong transaction).
+
+### Kiểm thử / Verification
+1. `tsc --noEmit` sạch.
+2. `curl`: gọi `approve` → kiểm tra ngay response JSON trả về có chứa entry `APPROVE` vừa tạo trong mảng `logs` (trước đây thiếu). Lặp lại tương tự cho `reject`/`request-change`/`resubmit`.
+3. Smoke test lại luồng GENERAL đầy đủ để đảm bảo không regression.
+4. Cập nhật "Kết quả thực thi", commit.
+
+---
+
+## Bước 10 — Đồng bộ code lên GitHub
+
+Không đổi kế hoạch — vẫn chờ người dùng hoàn tất `gh auth login` (đã cài `gh` CLI, đã dựng sẵn lịch sử commit theo từng bước ở local). Khi người dùng xác nhận đăng nhập xong, chỉ cần: `gh repo create --private`, thêm remote, `git push`.
+
+## Lưu ý chung
+- Sau khi xong Bước 7-9, roadmap MVP theo đúng `PLAN.md` coi như **hoàn thiện toàn bộ** (trừ việc đồng bộ GitHub phụ thuộc hành động của người dùng).
+- Không mở rộng thêm phạm vi ngoài những gì `PLAN.md` và người dùng đã xác nhận (vd. không tự thêm tính năng deactivate user, không tự thêm self-service đổi mật khẩu) — nếu cần, coi là yêu cầu mới, sẽ lên kế hoạch riêng.
+
+---
+
+## Kết quả thực thi Bước 7 (2026-07-16)
+
+> ✅ **TRẠNG THÁI: Bước 7 (Trang quản trị User) đã hoàn thành và kiểm thử.**
+
+### Những gì đã tạo ra thực tế
+**Backend:**
+- `prisma/seed.ts`: thêm `"user:manage"` vào permissions của `Director`.
+- `src/routes/users.ts` (mới): `router.use(authenticate, authorize("user:manage"))` áp cho toàn bộ route. `GET /`, `GET /:id`, `POST /` (zod validate + `hashPassword` + bắt `P2002` → `409` "Email đã tồn tại"), `PATCH /:id` (field tuỳ chọn, `password` có thì hash lại; bắt `P2025` → `404` cục bộ, không để lọt xuống error handler chung vốn trả message dành riêng cho Document).
+- `src/routes/meta.ts` (mới): `GET /api/roles`, `GET /api/departments`, cùng gate `user:manage`.
+- Mount `/api/users`, `/api/roles`, `/api/departments` trong `src/index.ts`.
+
+**Frontend:**
+- `src/pages/UserListPage.tsx`: bảng user + nút "+ Thêm user" + link "Sửa" từng dòng.
+- `src/pages/UserFormPage.tsx`: dùng chung tạo/sửa; tự thêm hàm `apiPatch` cục bộ (chỉ dùng ở đây, không mở rộng `api/client.ts` cho 1 verb dùng 1 nơi); email khoá khi sửa; mật khẩu bắt buộc khi tạo, tuỳ chọn khi sửa.
+- `App.tsx`: thêm route `/users`, `/users/new`, `/users/:id/edit`.
+- `DocumentListPage.tsx`: thêm link "Quản lý user" trong header, chỉ hiện nếu `user.role.permissions.includes("user:manage")`.
+
+### Phát sinh / điều chỉnh so với kế hoạch
+Không có sai lệch kỹ thuật. Gặp lại đúng sự cố môi trường đã ghi nhận ở Frontend UI trước đó: mô phỏng click trên trang `/login` (tab trình duyệt cũ tái sử dụng từ phiên trước) không focus được input — xác nhận lại đây là vấn đề dispatch sự kiện phía trình duyệt từ xa (không phải lỗi code, đã từng điều tra kỹ ở bước trước). Dùng lại giải pháp gọi `fetch()` thật trong console trang để đăng nhập `director`, sau đó điều hướng bằng URL trực tiếp để xem các trang — vẫn là kiểm thử qua trình duyệt thật (đúng cookie, đúng origin), chỉ khác cách kích hoạt request/điều hướng thay vì click.
+
+### Kết quả kiểm thử (toàn bộ PASS)
+- `tsc --noEmit` (backend) + `npm run build` (frontend) sạch.
+- `curl`: `staff` (không có `user:manage`) → `403`. `director` → `200`, danh sách đầy đủ, không có `passwordHash`.
+- `director` tạo user mới → `201` → login thử bằng tài khoản đó → `200` thành công.
+- Tạo trùng email → `409 {"error":"Email đã tồn tại"}`.
+- `director` `PATCH` đổi role user vừa tạo (Staff → Dept_Head) → `200`, phản ánh đúng ngay trong response.
+- Qua Chrome MCP thật: login `director` (qua `fetch()` do click bị lỗi môi trường) → `/documents` hiện đúng link "Quản lý user" → `/users` hiển thị đúng 5 user (kể cả user vừa tạo/sửa role qua curl) → `/users/new` render đúng dropdown role/department từ API → `/users/:id/edit` tự điền đúng dữ liệu hiện có, email bị khoá đúng thiết kế.
+- Đã dừng cả 2 dev server sau khi test; Postgres container vẫn `Up ... (healthy)`.
+
+### Bước tiếp theo
+Bước 8 (Web Push — 6b) chưa bắt đầu, sẽ triển khai tiếp theo đúng lộ trình đã duyệt.

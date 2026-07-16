@@ -6,6 +6,8 @@ import { Prisma } from "@prisma/client";
 import healthRouter from "./routes/health";
 import authRouter from "./routes/auth";
 import documentsRouter from "./routes/documents";
+import usersRouter from "./routes/users";
+import metaRouter from "./routes/meta";
 import { AppError } from "./lib/errors";
 import { initWebSocket } from "./lib/ws";
 
@@ -17,6 +19,8 @@ app.use(cookieParser());
 app.use("/api", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/documents", documentsRouter);
+app.use("/api/users", usersRouter);
+app.use("/api", metaRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

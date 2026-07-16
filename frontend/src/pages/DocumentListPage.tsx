@@ -40,6 +40,7 @@ export function DocumentListPage() {
   }, [lastEvent, fetchList]);
 
   const canCreate = user?.role.permissions.includes("document:create") ?? false;
+  const canManageUsers = user?.role.permissions.includes("user:manage") ?? false;
 
   return (
     <div className="page">
@@ -49,6 +50,7 @@ export function DocumentListPage() {
           <span className="current-user">
             {user?.fullName} ({user?.role.name})
           </span>
+          {canManageUsers && <Link to="/users">Quản lý user</Link>}
           <button onClick={() => logout()}>Đăng xuất</button>
         </div>
       </header>

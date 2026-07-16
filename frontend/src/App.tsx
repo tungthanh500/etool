@@ -5,6 +5,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { DocumentListPage } from "./pages/DocumentListPage";
 import { CreateDocumentPage } from "./pages/CreateDocumentPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
+import { UserListPage } from "./pages/UserListPage";
+import { UserFormPage } from "./pages/UserFormPage";
 import "./App.css";
 
 function App() {
@@ -34,6 +36,30 @@ function App() {
             element={
               <ProtectedRoute>
                 <DocumentDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/users"
+            element={
+              <ProtectedRoute>
+                <UserListPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/users/new"
+            element={
+              <ProtectedRoute>
+                <UserFormPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/users/:id/edit"
+            element={
+              <ProtectedRoute>
+                <UserFormPage />
               </ProtectedRoute>
             }
           />

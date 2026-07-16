@@ -50,6 +50,10 @@
   margin-bottom: 16px;
 }
 
+.page-header a {
+  margin-right: 12px;
+}
+
 .current-user {
   margin-right: 12px;
   color: #555;

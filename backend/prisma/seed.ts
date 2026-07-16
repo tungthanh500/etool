@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 const ROLES: { name: string; permissions: string[] }[] = [
   { name: "Staff", permissions: ["document:create", "document:read:own"] },
   { name: "Dept_Head", permissions: ["document:approve:dept"] },
-  { name: "Director", permissions: ["document:approve:final"] },
+  { name: "Director", permissions: ["document:approve:final", "user:manage"] },
   { name: "Accountant", permissions: ["document:approve:payment"] },
 ];
 
