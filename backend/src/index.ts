@@ -8,6 +8,7 @@ import authRouter from "./routes/auth";
 import documentsRouter from "./routes/documents";
 import usersRouter from "./routes/users";
 import metaRouter from "./routes/meta";
+import pushRouter from "./routes/push";
 import { AppError } from "./lib/errors";
 import { initWebSocket } from "./lib/ws";
 
@@ -21,6 +22,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/documents", documentsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api", metaRouter);
+app.use("/api/push", pushRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

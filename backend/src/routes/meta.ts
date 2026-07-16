@@ -5,9 +5,10 @@ import { authorize } from "../middlewares/authorize";
 
 const router = Router();
 
-router.use(authenticate, authorize("user:manage"));
-
-router.get("/roles", async (_req, res, next) => {
+// Không dùng router.use(...) chung cho cả router — router này được mount ở tiền tố
+// rộng "/api", nếu áp middleware không giới hạn path thì nó sẽ chặn nhầm mọi request
+// "/api/*" khác được đăng ký sau nó (ví dụ /api/push/*) do Express so khớp theo tiền tố.
+router.get("/roles", authenticate, authorize("user:manage"), async (_req, res, next) => {
   try {
     res.json(await prisma.role.findMany({ orderBy: { name: "asc" } }));
   } catch (err) {
@@ -15,7 +16,7 @@ router.get("/roles", async (_req, res, next) => {
   }
 });
 
-router.get("/departments", async (_req, res, next) => {
+router.get("/departments", authenticate, authorize("user:manage"), async (_req, res, next) => {
   try {
     res.json(await prisma.department.findMany({ orderBy: { name: "asc" } }));
   } catch (err) {

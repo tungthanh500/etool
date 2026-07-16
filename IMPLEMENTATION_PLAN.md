@@ -872,6 +872,53 @@ Bước 8 (Web Push — 6b) là hạng mục cuối cùng theo roadmap trước 
 
 ---
 
+## Kết quả thực thi Bước 8 (2026-07-16)
+
+> ⚠️ **TRẠNG THÁI: Code đã hoàn thành, kiểm thử được phần backend đầy đủ; phần "trình duyệt thật nhận notification" KHÔNG kiểm chứng được do giới hạn nền tảng cứng — nêu chi tiết bên dưới, không nhận vơ là đã test xong toàn bộ.**
+
+### Những gì đã tạo ra thực tế
+**Backend:**
+- Cài `web-push` (dependency), `@types/web-push` (devDependency). Sinh cặp khoá VAPID qua `npx web-push generate-vapid-keys`, lưu vào `backend/.env` (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`); `.env.example` chỉ có placeholder `"change-me"`.
+- `prisma/schema.prisma`: thêm model `PushSubscription` (`userId`, `endpoint` @unique, `p256dh`, `auth`) + relation `pushSubscriptions` trên `User` → migration `20260716050002_add_push_subscription`.
+- `src/lib/push.ts` (mới): export `VAPID_PUBLIC_KEY`, gọi `webpush.setVapidDetails(...)` lúc import; `sendPushToUsers(userIds, payload)` — với mỗi subscription thuộc các `userId` đó, gọi `webpush.sendNotification`; nếu lỗi có `statusCode` 404/410 thì tự xoá subscription hỏng, lỗi khác chỉ log (không throw, không làm sập route gọi nó).
+- `src/lib/notifications.ts`: thêm `notify(userIds, event)` gộp gọi cả `notifyUsers` (WS) và `sendPushToUsers` (Push) — 1 điểm gọi duy nhất.
+- `src/routes/push.ts` (mới): `GET /public-key` (không cần auth), `POST /subscribe` (authenticate, upsert theo `endpoint`), `DELETE /subscribe` (authenticate, xoá theo `endpoint`).
+- `src/routes/documents.ts`: đổi toàn bộ 6 điểm gọi `notifyUsers(...)` thành `notify(...)`.
+
+**Frontend:**
+- `public/service-worker.js`: lắng nghe `push` (parse payload, `showNotification`) và `notificationclick` (focus/mở đúng trang chi tiết văn bản).
+- `src/hooks/usePushNotifications.ts`: kiểm tra hỗ trợ (`serviceWorker`/`PushManager`), `subscribe()` xin quyền → đăng ký SW → lấy VAPID public key → `pushManager.subscribe()` → POST subscription lên backend; tự động thử subscribe lại âm thầm nếu quyền đã "granted" từ trước.
+- `DocumentListPage.tsx`: nút "Bật thông báo" chỉ hiện nếu trình duyệt hỗ trợ và chưa cấp quyền.
+
+### Bug phát hiện và đã sửa ngay trong lúc test (quan trọng)
+`src/routes/meta.ts` mount ở tiền tố **rộng** `/api` (`app.use("/api", metaRouter)`) với `router.use(authenticate, authorize("user:manage"))` **không giới hạn path** — theo cách Express khớp middleware, dòng này chặn **mọi** request `/api/*` được định tuyến tới router này, bất kể có route con khớp hay không. Vì `metaRouter` được mount trước `pushRouter` trong `index.ts`, mọi request tới `/api/push/*` bị "nuốt" nhầm bởi middleware auth của `metaRouter` trước khi kịp tới `pushRouter` — gây `401`/`403` sai cho toàn bộ endpoint Push. **Đã sửa**: bỏ `router.use(...)` chung, gắn `authenticate, authorize("user:manage")` trực tiếp vào từng route cụ thể (`/roles`, `/departments`) trong `meta.ts` — giờ chỉ áp dụng đúng 2 route đó, các request khác rơi qua middleware tiếp theo trong chuỗi như bình thường. Đây là lỗi thật do tôi viết, phát hiện được chính nhờ có bước kiểm thử `curl` trước khi coi là xong.
+
+### Giới hạn nền tảng phát hiện khi test qua trình duyệt thật (không phải lỗi code)
+Khi mở app qua `http://192.168.10.9:5173` (IP LAN, không phải `localhost`, không phải HTTPS) trên trình duyệt Chrome MCP thật, kiểm tra bằng `javascript_tool`:
+```
+{ isSecureContext: false, protocol: "http:", hostname: "192.168.10.9" }
+{ hasServiceWorker: false, hasPushManager: true }
+```
+**Service Worker (và do đó toàn bộ Web Push) chỉ được trình duyệt cho phép chạy trên "secure context": HTTPS, hoặc đúng `localhost`/`127.0.0.1`.** Truy cập qua IP LAN thuần HTTP — như cách bắt buộc phải dùng trong phiên này vì trình duyệt Chrome MCP nằm trên máy Windows khác, không phải server — **không bao giờ** thoả điều kiện này. Đây là quy tắc bảo mật nền tảng của mọi trình duyệt hiện đại, không phải cấu hình có thể chỉnh trong code ứng dụng, và không phải sự cố tạm thời như các lần gặp lỗi click trước đó. Vì vậy: **không có cách nào trong phiên làm việc hiện tại để thực sự đăng ký Service Worker/subscribe Push/nhận notification hệ điều hành qua trình duyệt thật** — muốn kiểm chứng trọn vẹn phần này cần chạy app qua HTTPS thật (hoặc trình duyệt và server cùng một máy dùng `localhost`), việc dựng thêm hạ tầng đó nằm ngoài phạm vi đã duyệt cho bước này.
+
+### Kết quả kiểm thử — những gì ĐÃ xác nhận (qua curl + code review, đều PASS)
+- `tsc --noEmit` (backend) + `npm run build` (frontend) sạch. Migration áp dụng thành công.
+- `GET /api/push/public-key` (không cookie) → `200`, trả đúng public key.
+- `POST /api/push/subscribe` không cookie → `401`. Có cookie (`staff`), payload hợp lệ → `201`, xác nhận qua `psql` có đúng 1 row `PushSubscription`.
+- Kích hoạt sự kiện thật nhắm đúng vào subscription đó (`depthead` comment trên document của `staff`) → `sendPushToUsers` được gọi, `web-push` báo lỗi validate key cục bộ (do dùng key giả `"testp256dh"`/`"testauth"` không đúng độ dài chuẩn — vì không có subscription thật từ trình duyệt) → lỗi được `catch` và log rõ ràng, **route vẫn trả `201` bình thường, server không sập** — xác nhận `notify()` không làm hỏng luồng chính dù kênh Push lỗi.
+- Sau khi phát hiện giới hạn `isSecureContext`, đã xoá subscription giả (dữ liệu test không hợp lệ) khỏi DB.
+
+### Những gì CHƯA xác nhận được (do giới hạn nền tảng, không phải chưa làm)
+- Đăng ký Service Worker thật qua trình duyệt.
+- Trình duyệt thật hiện prompt xin quyền Notification và người dùng chấp nhận.
+- `pushManager.subscribe()` trả về subscription thật (key hợp lệ theo chuẩn Web Push).
+- `web-push` gửi thành công tới dịch vụ đẩy thật (FCM/Mozilla) và hệ điều hành hiển thị notification.
+
+### Bước tiếp theo
+Muốn kiểm chứng trọn vẹn Web Push, cần một trong hai: (a) người dùng tự mở app trên chính máy có trình duyệt qua `http://localhost:5173` (khi frontend và trình duyệt cùng máy), hoặc (b) triển khai app qua HTTPS thật (kể cả tự ký chứng chỉ, trình duyệt chấp nhận thủ công) — cả hai đều là quyết định hạ tầng của người dùng, không tự ý làm thêm nếu không được yêu cầu. Bước 8 coi như hoàn thành ở mức "code đúng, kiểm thử được mọi phần không phụ thuộc trình duyệt thật".
+
+---
+
 ## Bước 10 — Đồng bộ code lên GitHub
 
 Không đổi kế hoạch — vẫn chờ người dùng hoàn tất `gh auth login` (đã cài `gh` CLI, đã dựng sẵn lịch sử commit theo từng bước ở local). Khi người dùng xác nhận đăng nhập xong, chỉ cần: `gh repo create --private`, thêm remote, `git push`.

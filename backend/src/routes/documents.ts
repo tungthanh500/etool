@@ -8,8 +8,7 @@ import { AppError } from "../lib/errors";
 import { authenticate } from "../middlewares/authenticate";
 import { authorize } from "../middlewares/authorize";
 import { canViewDocument, isCurrentApprover } from "../lib/workflow";
-import { getNotifiableUserIds } from "../lib/notifications";
-import { notifyUsers } from "../lib/ws";
+import { getNotifiableUserIds, notify } from "../lib/notifications";
 
 const router = Router();
 
@@ -92,7 +91,7 @@ router.post(
         });
       });
 
-      notifyUsers(await getNotifiableUserIds(document, req.user!.id), {
+      notify(await getNotifiableUserIds(document, req.user!.id), {
         type: "document:created",
         documentId: document.id,
         title: document.title,
@@ -241,7 +240,7 @@ router.post("/:id/approve", authenticate, async (req, res, next) => {
       });
     });
 
-    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+    notify(await getNotifiableUserIds(updated, req.user!.id), {
       type: updated.status === "APPROVED" ? "document:approved" : "document:step_advanced",
       documentId: updated.id,
       title: updated.title,
@@ -278,7 +277,7 @@ router.post("/:id/reject", authenticate, async (req, res, next) => {
       });
     });
 
-    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+    notify(await getNotifiableUserIds(updated, req.user!.id), {
       type: "document:rejected",
       documentId: updated.id,
       title: updated.title,
@@ -320,7 +319,7 @@ router.post("/:id/request-change", authenticate, async (req, res, next) => {
       });
     });
 
-    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+    notify(await getNotifiableUserIds(updated, req.user!.id), {
       type: "document:changes_requested",
       documentId: updated.id,
       title: updated.title,
@@ -357,7 +356,7 @@ router.post("/:id/resubmit", authenticate, async (req, res, next) => {
       });
     });
 
-    notifyUsers(await getNotifiableUserIds(updated, req.user!.id), {
+    notify(await getNotifiableUserIds(updated, req.user!.id), {
       type: "document:resubmitted",
       documentId: updated.id,
       title: updated.title,
@@ -390,7 +389,7 @@ router.post("/:id/comments", authenticate, async (req, res, next) => {
       include: { user: { select: SAFE_CREATOR_SELECT } },
     });
 
-    notifyUsers(await getNotifiableUserIds(document, req.user!.id), {
+    notify(await getNotifiableUserIds(document, req.user!.id), {
       type: "document:commented",
       documentId: document.id,
       title: document.title,

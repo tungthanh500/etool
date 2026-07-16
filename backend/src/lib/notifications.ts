@@ -1,5 +1,7 @@
 import type { Document, DocumentLog, WorkflowStep } from "@prisma/client";
 import { prisma } from "./prisma";
+import { notifyUsers } from "./ws";
+import { sendPushToUsers } from "./push";
 
 type NotifiableDocument = Document & {
   creator: { departmentId: string };
@@ -38,4 +40,11 @@ export async function getNotifiableUserIds(
 
   ids.delete(excludeUserId);
   return [...ids];
+}
+
+// Gộp cả 2 kênh thông báo (WS cho tab đang mở + Web Push cho khi đã đóng tab)
+// vào 1 điểm gọi, tránh phải sửa lặp lại từng nơi trong documents.ts khi thêm kênh mới.
+export function notify(userIds: string[], event: Record<string, unknown>): void {
+  notifyUsers(userIds, event);
+  void sendPushToUsers(userIds, event);
 }

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiGet } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { usePushNotifications } from "../hooks/usePushNotifications";
 import { Toast } from "../components/Toast";
 import type { DocumentSummary } from "../types";
 
@@ -20,6 +21,8 @@ export function DocumentListPage() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const { lastEvent } = useWebSocket(true);
+  const { supported: pushSupported, permission: pushPermission, subscribe: subscribePush } =
+    usePushNotifications();
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -51,6 +54,9 @@ export function DocumentListPage() {
             {user?.fullName} ({user?.role.name})
           </span>
           {canManageUsers && <Link to="/users">Quản lý user</Link>}
+          {pushSupported && pushPermission !== "granted" && (
+            <button onClick={() => subscribePush()}>Bật thông báo</button>
+          )}
           <button onClick={() => logout()}>Đăng xuất</button>
         </div>
       </header>
