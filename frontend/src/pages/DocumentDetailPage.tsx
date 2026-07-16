@@ -4,6 +4,7 @@ import { apiGet, apiPost, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { Toast } from "../components/Toast";
+import { formatDateTime } from "../lib/formatDate";
 import type { DocumentDetail } from "../types";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -159,7 +160,7 @@ export function DocumentDetailPage() {
             <li key={log.id}>
               <strong>{log.user.fullName}</strong> — {ACTION_LABELS[log.action] ?? log.action}
               {log.comment && <>: {log.comment}</>}
-              <span className="timeline-time"> ({new Date(log.createdAt).toLocaleString("vi-VN")})</span>
+              <span className="timeline-time"> ({formatDateTime(log.createdAt)})</span>
             </li>
           ))}
         </ul>
