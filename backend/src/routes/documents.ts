@@ -19,6 +19,12 @@ const DOCUMENT_INCLUDE = {
   workflow: { include: { steps: { orderBy: { stepOrder: "asc" as const } } } },
 };
 
+// Join user vào mỗi log để timeline hiển thị được ai đã submit/duyệt/bình luận.
+const LOGS_INCLUDE = {
+  orderBy: { createdAt: "asc" as const },
+  include: { user: { select: SAFE_CREATOR_SELECT } },
+};
+
 const createDocumentSchema = z.object({
   title: z.string().min(1, "Thiếu tiêu đề"),
   type: z.enum(["PURCHASE", "PAYMENT", "GENERAL"]),
@@ -80,7 +86,7 @@ router.post(
               },
             },
           },
-          include: { ...DOCUMENT_INCLUDE, logs: true },
+          include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
         });
       });
 
@@ -132,7 +138,7 @@ router.get("/:id", authenticate, async (req, res, next) => {
       where: { id: req.params.id },
       include: {
         ...DOCUMENT_INCLUDE,
-        logs: { orderBy: { createdAt: "asc" } },
+        logs: LOGS_INCLUDE,
       },
     });
 
@@ -156,7 +162,7 @@ router.get(
     try {
       const document = await prisma.document.findUnique({
         where: { id: req.params.id },
-        include: { ...DOCUMENT_INCLUDE, logs: true },
+        include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
       if (!document) {
         throw new AppError(404, "Không tìm thấy văn bản");
@@ -188,7 +194,7 @@ const commentRequiredSchema = z.object({ comment: z.string().min(1, "Cần nêu 
 async function loadDocumentForAction(id: string) {
   const document = await prisma.document.findUnique({
     where: { id },
-    include: { ...DOCUMENT_INCLUDE, logs: true },
+    include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
   });
   if (!document) {
     throw new AppError(404, "Không tìm thấy văn bản");
@@ -217,7 +223,7 @@ router.post("/:id/approve", authenticate, async (req, res, next) => {
       const doc = await tx.document.update({
         where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: nextStep ? { currentStep: document.currentStep + 1 } : { status: "APPROVED" },
-        include: { ...DOCUMENT_INCLUDE, logs: true },
+        include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
       await tx.documentLog.create({
         data: { documentId: document.id, userId: req.user!.id, action: "APPROVE", comment: parsed.data.comment },
@@ -248,7 +254,7 @@ router.post("/:id/reject", authenticate, async (req, res, next) => {
       const doc = await tx.document.update({
         where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: { status: "REJECTED" },
-        include: { ...DOCUMENT_INCLUDE, logs: true },
+        include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
       await tx.documentLog.create({
         data: { documentId: document.id, userId: req.user!.id, action: "REJECT", comment: parsed.data.comment },
@@ -279,7 +285,7 @@ router.post("/:id/request-change", authenticate, async (req, res, next) => {
       const doc = await tx.document.update({
         where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
         data: { status: "CHANGES_REQUESTED" },
-        include: { ...DOCUMENT_INCLUDE, logs: true },
+        include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
       await tx.documentLog.create({
         data: {
@@ -315,7 +321,7 @@ router.post("/:id/resubmit", authenticate, async (req, res, next) => {
       const doc = await tx.document.update({
         where: { id: document.id, status: "CHANGES_REQUESTED" },
         data: { status: "PENDING" },
-        include: { ...DOCUMENT_INCLUDE, logs: true },
+        include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
       await tx.documentLog.create({
         data: { documentId: document.id, userId: req.user!.id, action: "SUBMIT", comment: parsed.data.comment },
@@ -324,6 +330,32 @@ router.post("/:id/resubmit", authenticate, async (req, res, next) => {
     });
 
     res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/comments", authenticate, async (req, res, next) => {
+  try {
+    const parsed = commentRequiredSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, "Cần nhập nội dung bình luận");
+
+    const document = await loadDocumentForAction(req.params.id);
+    if (!canViewDocument(document, req.user!)) {
+      throw new AppError(403, "Không đủ quyền bình luận trên văn bản này");
+    }
+
+    const log = await prisma.documentLog.create({
+      data: {
+        documentId: document.id,
+        userId: req.user!.id,
+        action: "COMMENT",
+        comment: parsed.data.comment,
+      },
+      include: { user: { select: SAFE_CREATOR_SELECT } },
+    });
+
+    res.status(201).json(log);
   } catch (err) {
     next(err);
   }

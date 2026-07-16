@@ -493,3 +493,70 @@ Không có sai lệch — toàn bộ 5 fix áp dụng đúng như thiết kế t
 
 ### Bước tiếp theo
 Bước 5 (Comment & Logs) vẫn là hạng mục kế tiếp theo lộ trình gốc, chưa bắt đầu.
+
+---
+
+# Bước 5 — Comment & Logs (thảo luận trên hồ sơ, timeline)
+
+## Context
+`GET /api/documents/:id` (Bước 3-4) đã trả về `logs` (toàn bộ `DocumentLog`: `SUBMIT`/`APPROVE`/`REJECT`/`REQUEST_CHANGE` tự động ghi khi chuyển trạng thái), nhưng **chưa có endpoint nào để người dùng chủ động thêm bình luận** (`action: "COMMENT"`) — đúng theo mô tả PLAN.md mục 1: *"Cho phép người duyệt và người nộp thảo luận, trao đổi ý kiến trực tiếp trên từng hồ sơ vụ việc."* Ngoài ra, `logs` hiện tại chỉ trả `userId` thô (không có tên người dùng) vì include `logs: true` không join quan hệ `user` — cần bổ sung để hiển thị "ai đã nói gì" trong khung thảo luận.
+
+Đây là mảnh ghép cuối cùng còn thiếu để `GET /:id` thực sự đóng vai trò **timeline gộp** (submit → approve/reject/request-change → comment qua lại), nên **không cần thêm endpoint xem timeline riêng** — chỉ cần bổ sung khả năng ghi comment và join thêm thông tin người viết vào `logs` đã có sẵn.
+
+### Quyết định kỹ thuật
+- **Tái sử dụng `canViewDocument()`** (đã có từ Bước 4) làm điều kiện duy nhất để được phép bình luận — không thêm khái niệm quyền mới. Điều này tự nhiên khớp đúng "người duyệt và người nộp": chủ sở hữu, người duyệt ở bước hiện tại, và bất kỳ ai đã từng có hành động trên hồ sơ (kể cả người duyệt bước trước đã xong việc) đều xem/bình luận được; người hoàn toàn không liên quan vẫn bị `403` như đã kiểm chứng ở Bước 4.
+- **Tái sử dụng `commentRequiredSchema`** (đã có sẵn trong `documents.ts` từ Bước 4, dùng cho reject/request-change) cho validate body `{ comment: string, min 1 }` — không tạo schema trùng lặp.
+- **Join `user` vào `logs`**: thay mọi chỗ đang dùng `logs: true` bằng một hằng `LOGS_INCLUDE` dùng chung (`{ orderBy: { createdAt: "asc" }, include: { user: { select: SAFE_CREATOR_SELECT } } }`) — áp dụng nhất quán cho `POST /`, `GET /:id`, download route, `loadDocumentForAction`, và 4 route hành động, để mọi response có `logs` đều kèm tên người thực hiện.
+- **Không đổi trạng thái Document** khi comment — chỉ `INSERT` vào `DocumentLog`, không cần transaction.
+
+## Kế hoạch triển khai
+
+### 1. `backend/src/routes/documents.ts`
+- Thêm hằng `LOGS_INCLUDE` như mô tả trên, thay thế toàn bộ `logs: true` hiện có (7 vị trí: `POST /`, `GET /:id`, download route, `loadDocumentForAction`, và bên trong transaction của `approve`/`reject`/`request-change`/`resubmit`).
+- Thêm route mới: `POST /:id/comments`
+  - Middleware: `authenticate`.
+  - Validate body bằng `commentRequiredSchema`.
+  - Fetch document qua `loadDocumentForAction` (đã có sẵn, giờ trả kèm `logs` join `user`).
+  - Nếu `!canViewDocument(document, req.user!)` → `403`.
+  - `prisma.documentLog.create({ data: { documentId, userId: req.user!.id, action: "COMMENT", comment } , include: { user: { select: SAFE_CREATOR_SELECT } } })`.
+  - Trả `201` với log vừa tạo.
+
+## Kiểm thử / Verification
+1. `npx tsc --noEmit` sạch.
+2. `npm run dev`, login 4 user, tạo 1 document GENERAL bằng `staff`:
+   - `staff` (chủ sở hữu) `POST /:id/comments` `{"comment":"..."}` → `201`, response có `user.fullName`.
+   - `depthead` (approver bước hiện tại) comment → `201`.
+   - `director` (chưa tới bước của mình, doc còn ở bước 1) comment → `403`.
+   - `accountant` (hoàn toàn không liên quan) comment → `403`.
+   - `POST /:id/comments` thiếu `comment` hoặc chuỗi rỗng → `400`.
+3. `depthead` approve để hồ sơ sang bước `director` → gọi lại `POST /:id/comments` bằng `depthead` (đã từng thao tác, dù không còn là approver hiện tại) → vẫn `201` (đúng theo `canViewDocument` tính cả log cũ).
+4. `GET /:id` → xác nhận `logs` trả về đầy đủ theo thứ tự thời gian gồm `SUBMIT`, `APPROVE`, các `COMMENT` xen kẽ, mỗi entry có `user.fullName`/`email` (không có `passwordHash`).
+5. Dừng backend dev server sau khi test; giữ Postgres container chạy tiếp cho Bước 6.
+
+## Lưu ý
+- Không làm chỉnh sửa/xoá comment (không có trong phạm vi PLAN.md, chỉ nói "thảo luận trao đổi") — nếu cần, coi là mở rộng riêng sau này.
+- Bước 6 (Thông báo realtime/Web Push) sẽ là bước cuối theo lộ trình gốc.
+
+---
+
+## Kết quả thực thi Bước 5 (2026-07-16)
+
+> ✅ **TRẠNG THÁI: Bước 5 đã hoàn thành và kiểm thử.**
+
+### Những gì đã sửa ra thực tế
+- `src/routes/documents.ts`: thêm hằng `LOGS_INCLUDE` (`orderBy createdAt asc` + `include user select an toàn`), thay thế toàn bộ 7 chỗ dùng `logs: true`/`logs: { orderBy... }` cũ (POST /, GET /:id, download route, `loadDocumentForAction`, và bên trong `approve`/`reject`/`request-change`/`resubmit`).
+- Thêm route mới `POST /:id/comments`: `authenticate` + `commentRequiredSchema` (tái dùng từ Bước 4) + `canViewDocument()` (tái dùng từ Bước 4) + `prisma.documentLog.create({action:"COMMENT"})`, trả `201` kèm `user` (fullName/email/departmentId, không `passwordHash`).
+- Không cần đổi schema, không cần migration mới — `DocumentLog.action` đã là `String` tự do từ đầu.
+
+### Phát sinh / điều chỉnh so với kế hoạch
+Không có sai lệch — đúng như thiết kế trong Context/kế hoạch, tái sử dụng 100% hạ tầng đã có từ Bước 4 (`canViewDocument`, `commentRequiredSchema`), không phát sinh khái niệm quyền mới.
+
+### Kết quả kiểm thử (toàn bộ PASS)
+- `npx tsc --noEmit` sạch.
+- `staff` (chủ sở hữu) comment → `201`. `depthead` (approver bước hiện tại) comment → `201`. `director` (chưa tới bước) comment → `403`. `accountant` (không liên quan) comment → `403`. Thiếu `comment` → `400`.
+- `depthead` approve (chuyển sang bước `director`) → sau đó `depthead` comment lại dù không còn là approver hiện tại → vẫn `201` (đúng vì `canViewDocument` tính cả "đã từng có log") — xác nhận đúng ý PLAN.md "người duyệt và người nộp" được thảo luận, kể cả sau khi đã hành động xong.
+- `GET /:id` trả `logs` đầy đủ theo timeline: `SUBMIT` (staff) → `COMMENT` (staff) → `COMMENT` (depthead) → `APPROVE` (depthead) → `COMMENT` (depthead), mỗi entry đều có `user.fullName` rõ ràng.
+- Đã dừng backend dev server và xoá file tạm sau khi test; Postgres container vẫn `Up ... (healthy)` cho Bước 6.
+
+### Bước tiếp theo
+Bước 6 (Thông báo realtime qua WebSocket & Web Push) là hạng mục cuối cùng theo lộ trình gốc, chưa bắt đầu. Việc đồng bộ code lên GitHub (tạo repo private qua `gh`) cũng đang tạm hoãn theo yêu cầu người dùng — `gh auth login` chưa hoàn tất xác thực, 5 commit Bước 1→4.5 đã sẵn sàng ở local, chờ push khi được yêu cầu tiếp tục.
