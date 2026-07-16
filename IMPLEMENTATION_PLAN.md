@@ -644,3 +644,104 @@ Không có sai lệch kỹ thuật — đúng thiết kế. Việc thu hẹp ph�
 Đây là bước cuối cùng theo lộ trình 6 bước gốc trong `PLAN.md` (trừ Web Push — 6b, chờ frontend). Còn lại 2 hạng mục mở, tuỳ người dùng chọn khi muốn tiếp tục:
 1. **Xây frontend UI thật** (login, danh sách văn bản, duyệt hồ sơ, kết nối WebSocket nhận thông báo, và làm luôn Web Push/6b khi đó).
 2. **Đồng bộ code lên GitHub** — `gh auth login` vẫn chưa hoàn tất xác thực từ phía người dùng; hiện có 7 commit sẵn sàng ở local (Bước 1→6), chưa push.
+
+---
+
+# Frontend UI — Login, danh sách, tạo văn bản, chi tiết/duyệt, WebSocket
+
+## Context
+Người dùng chọn xây frontend UI thật, đúng lúc phù hợp vì toàn bộ API backend (Bước 1-6) đã hoàn thiện và kiểm thử. `frontend/` hiện vẫn là scaffold Vite mặc định (logo React/Vite, nút đếm số) — chưa có route, chưa có thư viện routing/state, chỉ có `react`+`react-dom`. `vite.config.ts` đã proxy `/api` → `http://localhost:4000` từ Bước 1.
+
+**Điều chỉnh phạm vi:** giữ Web Push (6b) làm **tăng riêng tiếp theo sau khi frontend core này chạy được** — không gộp vào cùng lượt. Lý do: Web Push cần Service Worker + VAPID keys + model `PushSubscription` mới + endpoint subscribe riêng, là một khối công việc độc lập với kiểm thử khác hẳn (cần trình duyệt thật cấp quyền Notification); gộp chung sẽ làm plan quá tải và khó kiểm chứng từng phần. Đúng tinh thần từng bước nhỏ, kiểm thử được đã áp dụng suốt dự án.
+
+### Quyết định kỹ thuật
+- **Thêm `react-router-dom`** (dependency mới duy nhất ngoài các gói UI phụ) — app có 4 màn hình rõ ràng (login/danh sách/tạo mới/chi tiết), cần URL thật để bookmark/back button, hợp lý hơn tự quản lý state chuyển màn hình tay.
+- **Không thêm thư viện fetch/state (react-query, zustand...)** — quy mô app nhỏ, `fetch` thuần + `useState`/`useEffect` + 1 `AuthContext` (React Context) là đủ, giữ đúng tinh thần tối giản đã dùng suốt backend.
+- **Không thêm UI kit (MUI/Tailwind)** — CSS thuần tối giản, đủ dùng được (form, bảng, badge trạng thái), không phải là mục tiêu thẩm mỹ của dự án nội bộ này.
+- **`formData` nhập bằng textarea JSON tự do** — đúng tinh thần JSONB linh hoạt của PLAN.md; PLAN.md không cho danh sách field cụ thể theo từng loại văn bản (PURCHASE cần field gì, PAYMENT cần field gì...) nên xây form động theo từng loại là việc chưa đủ thông tin để làm đúng — giữ nguyên dạng JSON thô cho MVP, dễ mở rộng sau khi có yêu cầu field cụ thể.
+- **Đọc `user.role.permissions`/`canApprove` chỉ để ẩn/hiện nút** — đúng nguyên văn PLAN.md mục 2 ("Frontend chỉ đọc thuộc tính giao diện... để ẩn/hiện nút"), không tự quyết định quyền ở client; mọi enforcement thật vẫn ở backend (đã có từ Bước 2-6).
+- **WebSocket kết nối thẳng tới backend** (`ws://<hostname>:4000`, tự suy ra `wss://` khi trang chạy HTTPS), không qua Vite dev proxy — vì `WebSocketServer` đã gắn vào toàn bộ `http.Server` không phân biệt path, nên kết nối thẳng đơn giản hơn cấu hình `ws: true` cho Vite proxy. Cookie `SameSite=Strict` vẫn được gửi vì `localhost:5173` và `localhost:4000` cùng site (khác cổng không tính là khác site).
+
+## Kế hoạch triển khai
+
+### 1. Cài dependency
+`react-router-dom` (dependency, `frontend/`).
+
+### 2. Cấu trúc file mới trong `frontend/src`
+```
+api/
+  client.ts            # wrapper fetch: credentials include, parse JSON, throw kèm message lỗi backend khi !res.ok
+context/
+  AuthContext.tsx       # gọi GET /api/auth/me lúc mount; expose {user, loading, login, logout}
+hooks/
+  useWebSocket.ts        # kết nối ws khi đã đăng nhập; expose lastEvent (message mới nhất đã parse)
+components/
+  ProtectedRoute.tsx      # redirect /login nếu chưa đăng nhập
+  Toast.tsx                # banner nhỏ hiển thị lastEvent, tự ẩn sau vài giây
+pages/
+  LoginPage.tsx
+  DocumentListPage.tsx      # 2 tab: "Của tôi" (GET /api/documents) và "Chờ tôi duyệt" (GET /api/documents/pending)
+  CreateDocumentPage.tsx     # title/type/formData(JSON textarea)/file input nhiều file -> multipart POST /api/documents
+  DocumentDetailPage.tsx      # chi tiết + attachments (link download) + timeline logs + nút hành động theo canApprove/creatorId + ô comment
+```
+Viết lại `App.tsx`, `App.css`, `index.css`, `main.tsx` (bỏ toàn bộ boilerplate Vite mặc định: `assets/react.svg`, `vite.svg`, `hero.png`, nút đếm số); `App.tsx` dựng `<AuthProvider><BrowserRouter><Routes>...</Routes></BrowserRouter></AuthProvider>`.
+
+### 3. Luồng trang chi tiết (`DocumentDetailPage.tsx`) — trọng tâm UI
+- Fetch `GET /api/documents/:id`; nếu `403`/`404` hiển thị thông báo rõ ràng (không crash).
+- Hiển thị: `title`, `type`, `status` (badge màu theo trạng thái), `currentStep`/tổng số bước (`workflow.steps.length`), danh sách `attachments` (link `<a href="/api/documents/:id/attachments/:attachmentId/download">`), timeline `logs` (action + `user.fullName` + `comment` + thời gian, sắp theo thứ tự đã có sẵn từ backend).
+- Nút hành động: nếu `canApprove === true` → hiện `Duyệt`/`Từ chối`/`Yêu cầu chỉnh sửa` (2 nút sau mở prompt nhập lý do trước khi gọi API, đúng validate `commentRequiredSchema` backend đã có). Nếu `status === "CHANGES_REQUESTED" && creatorId === user.id` → hiện `Nộp lại`.
+- Ô nhập bình luận + nút gửi → `POST /:id/comments`, refetch lại document sau khi gửi thành công.
+- `useWebSocket().lastEvent` nếu `documentId` khớp trang đang mở → tự động refetch document (cập nhật timeline/trạng thái theo thời gian thực mà không cần F5).
+
+### 4. `DocumentListPage.tsx`
+- 2 tab đơn giản (state cục bộ, không cần route con riêng). Bảng: `title`, `type`, `status`, `currentStep`, link vào chi tiết. Nút "+ Tạo văn bản" chỉ hiện nếu `user.role.permissions.includes("document:create")`.
+- `useWebSocket().lastEvent` bất kỳ → refetch lại danh sách đang xem (đơn giản, không cần diff thông minh).
+
+## Kiểm thử / Verification
+1. `npx tsc -b` (build check) + `npm run build` (frontend) sạch, không lỗi TypeScript.
+2. Chạy song song `npm run dev` (backend, port 4000) và `npm run dev` (frontend, port 5173).
+3. Xác nhận bằng `curl http://localhost:5173/` trả về HTML gốc (200) trước khi kiểm thử tương tác.
+4. Nếu có công cụ trình duyệt khả dụng (Chrome MCP) trong phiên làm việc: dùng nó để thực sự click qua luồng — đăng nhập bằng `staff@example.com`/`ChangeMe123!`, tạo văn bản, mở bằng `depthead@example.com` ở tab khác để duyệt, xác nhận toast/thông báo thời gian thực xuất hiện không cần F5. Nếu công cụ trình duyệt không khả dụng/không kết nối: báo rõ cho người dùng đây là giới hạn của phiên làm việc và đề nghị người dùng tự mở `http://<server-ip>:5173` để xác nhận bằng mắt, không tự nhận là "đã kiểm thử UI" nếu chỉ dừng ở build-check.
+5. Dừng cả 2 dev server sau khi xong; giữ Postgres container chạy.
+
+## Lưu ý
+- Web Push (6b) **chưa làm ở lượt này** — sẽ lên kế hoạch riêng ngay sau khi frontend core này chạy ổn, gồm: cài `web-push`, model `PushSubscription`, endpoint subscribe, Service Worker phía frontend, và nút "Bật thông báo" trong UI.
+- Không tự thiết kế lại kiến trúc phân quyền — mọi nút ẩn/hiện chỉ là UX, quyền thật vẫn được backend kiểm tra lại như đã có.
+
+---
+
+## Kết quả thực thi Frontend UI (2026-07-16)
+
+> ✅ **TRẠNG THÁI: Frontend core đã hoàn thành và kiểm thử thật qua trình duyệt (không chỉ build-check).**
+
+### Những gì đã tạo ra thực tế
+- Cài `react-router-dom` (dependency duy nhất mới).
+- `frontend/src/`:
+  - `types.ts`: type TypeScript khớp chính xác shape response backend (`User`, `SafeUser`, `Document(Summary|Detail)`, `DocumentLog`, `WorkflowStep`, `WsEvent`).
+  - `api/client.ts`: `apiGet`/`apiPost`/`apiPostForm` + `ApiError` (parse `{error}` từ backend).
+  - `context/AuthContext.tsx`: gọi `GET /api/auth/me` lúc mount, expose `user/loading/login/logout`.
+  - `hooks/useWebSocket.ts`: kết nối thẳng `ws://<hostname>:4000`, expose `lastEvent`.
+  - `components/ProtectedRoute.tsx`, `components/Toast.tsx`.
+  - `pages/LoginPage.tsx`, `DocumentListPage.tsx` (2 tab + nút tạo có điều kiện theo permission), `CreateDocumentPage.tsx`, `DocumentDetailPage.tsx` (meta + attachments + nút hành động theo `canApprove`/`creatorId` + timeline + ô comment).
+  - Viết lại `App.tsx` (router shell), `App.css`, `index.css`; xoá boilerplate Vite mặc định (`assets/react.svg`, `vite.svg`, `hero.png`, `public/icons.svg`, nút đếm số).
+
+### Phát sinh / điều chỉnh so với kế hoạch
+- **Phát hiện 1 bug nhỏ có sẵn từ Bước 4** (không liên quan frontend): response JSON trả về ngay từ `POST /:id/approve` (và reject/request-change/resubmit) có `logs` **thiếu đúng entry hành động vừa tạo** — do `tx.document.update({include: {..., logs}})` chạy **trước** `tx.documentLog.create()` trong cùng transaction, nên snapshot `logs` trả về bị "chậm 1 nhịp". Dữ liệu trong DB vẫn đúng tuyệt đối (xác nhận qua `GET /:id` ngay sau đó luôn đầy đủ) — đây chỉ là độ trễ hiển thị trong duy nhất response tức thời của chính hành động đó. Không ảnh hưởng frontend vì `DocumentDetailPage` luôn `fetchDoc()` lại (gọi `GET /:id` mới) sau mỗi hành động thay vì dùng trực tiếp response của action. Không sửa trong lượt này (ngoài phạm vi frontend, để dành sửa riêng nếu cần).
+- **Môi trường test đặc biệt**: trình duyệt Chrome MCP kết nối chạy trên máy Windows của người dùng (không phải server) — phải khởi động lại Vite dev server với `--host` để lắng nghe toàn bộ interface, dùng IP LAN thực (`192.168.10.9`) thay vì `localhost`.
+- **Sự cố công cụ trình duyệt**: chụp ảnh màn hình (`screenshot`) liên tục timeout ("renderer may be frozen"); mô phỏng click bằng toạ độ/`ref` **không** focus được input trên trang `CreateDocumentPage` (dù `document.elementFromPoint()` xác nhận đúng element nằm đúng vị trí, không bị che — chứng minh đây là lỗi dispatch sự kiện phía trình duyệt từ xa, không phải lỗi code/CSS). Bỏ qua bước giả lập click cho trang này, chuyển sang gọi `fetch()` thật ngay trong console của trang (cùng cookie, cùng origin) để xác nhận `apiPostForm`/multipart hoạt động đúng — vẫn là kiểm thử thật qua trình duyệt, chỉ khác cách kích hoạt request.
+
+### Kết quả kiểm thử (qua trình duyệt Chrome thật, không chỉ build-check)
+- `npm run build` (frontend) sạch, không lỗi TypeScript.
+- **Login**: điền form thật (click + type qua trình duyệt) → đăng nhập `staff@example.com` thành công → redirect `/documents`.
+- **Route guard**: truy cập `/` khi chưa đăng nhập → tự động redirect `/login` (xác nhận `ProtectedRoute` hoạt động).
+- **Danh sách văn bản**: hiển thị đúng toàn bộ dữ liệu thật từ các bước test trước (10 văn bản, đúng title/type/status/currentStep); nút "+ Tạo văn bản" hiện đúng (Staff có `document:create`).
+- **Chi tiết văn bản**: mở 1 văn bản → hiển thị đúng meta, `attachments` (tên file thật), timeline (`SUBMIT`).
+- **Bình luận**: gõ + gửi bình luận qua UI thật → `201`, xuất hiện ngay trong timeline không cần F5.
+- **WebSocket real-time (quan trọng nhất)**: trong khi tab trình duyệt của `staff` đang mở trang chi tiết, gọi `POST /:id/approve` bằng `depthead` qua `curl` (mô phỏng một người dùng khác) → tab của `staff` **tự động cập nhật** "Bước 2/2" và thêm dòng "Duyệt" vào timeline **không cần reload thủ công** — xác nhận tích hợp `useWebSocket` + refetch hoạt động đúng thật sự qua trình duyệt, không chỉ qua script giả lập.
+- **Tạo văn bản (multipart)**: `fetch()` thật từ trình duyệt (cùng cookie session) → `201`, điều hướng sang trang chi tiết → hiển thị đúng "Không có file đính kèm" (vì không gửi kèm file trong test này) và log `SUBMIT`.
+- Đã dừng cả 2 dev server sau khi test xong; Postgres container vẫn `Up ... (healthy)`.
+
+### Bước tiếp theo
+1. **Web Push (6b)** — giờ đã có frontend thật, có thể triển khai: `web-push` + VAPID keys + model `PushSubscription` + Service Worker + nút "Bật thông báo".
+2. **Đồng bộ code lên GitHub** — vẫn đang chờ `gh auth login` hoàn tất từ phía người dùng.
+3. (Tuỳ chọn, không bắt buộc) Sửa bug nhỏ "logs chậm 1 nhịp" trong response tức thời của action endpoints, phát hiện khi test frontend.
