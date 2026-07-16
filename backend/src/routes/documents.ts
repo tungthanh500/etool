@@ -7,10 +7,17 @@ import { upload, UPLOAD_DIR } from "../lib/upload";
 import { AppError } from "../lib/errors";
 import { authenticate } from "../middlewares/authenticate";
 import { authorize } from "../middlewares/authorize";
+import { canViewDocument, isCurrentApprover } from "../lib/workflow";
 
 const router = Router();
 
 const SAFE_CREATOR_SELECT = { id: true, fullName: true, email: true } as const;
+
+const DOCUMENT_INCLUDE = {
+  attachments: true,
+  creator: { select: SAFE_CREATOR_SELECT },
+  workflow: { include: { steps: { orderBy: { stepOrder: "asc" as const } } } },
+};
 
 const createDocumentSchema = z.object({
   title: z.string().min(1, "Thiếu tiêu đề"),
@@ -51,7 +58,7 @@ router.post(
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
 
       const document = await prisma.$transaction(async (tx) => {
-        const created = await tx.document.create({
+        return tx.document.create({
           data: {
             title,
             type,
@@ -74,17 +81,11 @@ router.post(
               },
             },
           },
-          include: {
-            attachments: true,
-            logs: true,
-            creator: { select: SAFE_CREATOR_SELECT },
-            workflow: { select: { id: true, name: true } },
-          },
+          include: { ...DOCUMENT_INCLUDE, logs: true },
         });
-        return created;
       });
 
-      res.status(201).json(document);
+      res.status(201).json({ ...document, canApprove: isCurrentApprover(document, req.user!) });
     } catch (err) {
       next(err);
     }
@@ -96,38 +97,47 @@ router.get("/", authenticate, authorize("document:read:own"), async (req, res, n
     const documents = await prisma.document.findMany({
       where: { creatorId: req.user!.id },
       orderBy: { createdAt: "desc" },
-      include: {
-        attachments: true,
-        creator: { select: SAFE_CREATOR_SELECT },
-        workflow: { select: { id: true, name: true } },
-      },
+      include: DOCUMENT_INCLUDE,
     });
-    res.json(documents);
+    res.json(documents.map((d) => ({ ...d, canApprove: isCurrentApprover(d, req.user!) })));
   } catch (err) {
     next(err);
   }
 });
 
-router.get("/:id", authenticate, authorize("document:read:own"), async (req, res, next) => {
+// Đăng ký trước "/:id" để tránh :id nuốt mất path "/pending".
+router.get("/pending", authenticate, async (req, res, next) => {
+  try {
+    const documents = await prisma.document.findMany({
+      where: { status: "PENDING" },
+      orderBy: { createdAt: "desc" },
+      include: DOCUMENT_INCLUDE,
+    });
+    const pending = documents.filter((d) => isCurrentApprover(d, req.user!));
+    res.json(pending.map((d) => ({ ...d, canApprove: true })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/:id", authenticate, async (req, res, next) => {
   try {
     const document = await prisma.document.findUnique({
       where: { id: req.params.id },
       include: {
-        attachments: true,
+        ...DOCUMENT_INCLUDE,
         logs: { orderBy: { createdAt: "asc" } },
-        creator: { select: SAFE_CREATOR_SELECT },
-        workflow: { include: { steps: { orderBy: { stepOrder: "asc" } } } },
       },
     });
 
     if (!document) {
       throw new AppError(404, "Không tìm thấy văn bản");
     }
-    if (document.creatorId !== req.user!.id) {
+    if (!canViewDocument(document, req.user!)) {
       throw new AppError(403, "Không đủ quyền xem văn bản này");
     }
 
-    res.json(document);
+    res.json({ ...document, canApprove: isCurrentApprover(document, req.user!) });
   } catch (err) {
     next(err);
   }
@@ -136,14 +146,16 @@ router.get("/:id", authenticate, authorize("document:read:own"), async (req, res
 router.get(
   "/:id/attachments/:attachmentId/download",
   authenticate,
-  authorize("document:read:own"),
   async (req, res, next) => {
     try {
-      const document = await prisma.document.findUnique({ where: { id: req.params.id } });
+      const document = await prisma.document.findUnique({
+        where: { id: req.params.id },
+        include: { ...DOCUMENT_INCLUDE, logs: true },
+      });
       if (!document) {
         throw new AppError(404, "Không tìm thấy văn bản");
       }
-      if (document.creatorId !== req.user!.id) {
+      if (!canViewDocument(document, req.user!)) {
         throw new AppError(403, "Không đủ quyền xem văn bản này");
       }
 
@@ -163,5 +175,150 @@ router.get(
     }
   },
 );
+
+const commentOptionalSchema = z.object({ comment: z.string().optional() });
+const commentRequiredSchema = z.object({ comment: z.string().min(1, "Cần nêu lý do") });
+
+async function loadDocumentForAction(id: string) {
+  const document = await prisma.document.findUnique({
+    where: { id },
+    include: { ...DOCUMENT_INCLUDE, logs: true },
+  });
+  if (!document) {
+    throw new AppError(404, "Không tìm thấy văn bản");
+  }
+  return document;
+}
+
+router.post("/:id/approve", authenticate, async (req, res, next) => {
+  try {
+    const parsed = commentOptionalSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, "Dữ liệu không hợp lệ");
+
+    const document = await loadDocumentForAction(req.params.id);
+    if (document.status !== "PENDING") {
+      throw new AppError(400, "Văn bản không ở trạng thái chờ duyệt");
+    }
+    if (!isCurrentApprover(document, req.user!)) {
+      throw new AppError(403, "Bạn không phải người duyệt ở bước hiện tại của văn bản này");
+    }
+
+    const nextStep = document.workflow.steps.find((s) => s.stepOrder === document.currentStep + 1);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const doc = await tx.document.update({
+        where: { id: document.id },
+        data: nextStep ? { currentStep: document.currentStep + 1 } : { status: "APPROVED" },
+        include: { ...DOCUMENT_INCLUDE, logs: true },
+      });
+      await tx.documentLog.create({
+        data: { documentId: document.id, userId: req.user!.id, action: "APPROVE", comment: parsed.data.comment },
+      });
+      return doc;
+    });
+
+    res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/reject", authenticate, async (req, res, next) => {
+  try {
+    const parsed = commentRequiredSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, "Cần nêu lý do từ chối");
+
+    const document = await loadDocumentForAction(req.params.id);
+    if (document.status !== "PENDING") {
+      throw new AppError(400, "Văn bản không ở trạng thái chờ duyệt");
+    }
+    if (!isCurrentApprover(document, req.user!)) {
+      throw new AppError(403, "Bạn không phải người duyệt ở bước hiện tại của văn bản này");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const doc = await tx.document.update({
+        where: { id: document.id },
+        data: { status: "REJECTED" },
+        include: { ...DOCUMENT_INCLUDE, logs: true },
+      });
+      await tx.documentLog.create({
+        data: { documentId: document.id, userId: req.user!.id, action: "REJECT", comment: parsed.data.comment },
+      });
+      return doc;
+    });
+
+    res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/request-change", authenticate, async (req, res, next) => {
+  try {
+    const parsed = commentRequiredSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, "Cần nêu lý do yêu cầu chỉnh sửa");
+
+    const document = await loadDocumentForAction(req.params.id);
+    if (document.status !== "PENDING") {
+      throw new AppError(400, "Văn bản không ở trạng thái chờ duyệt");
+    }
+    if (!isCurrentApprover(document, req.user!)) {
+      throw new AppError(403, "Bạn không phải người duyệt ở bước hiện tại của văn bản này");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const doc = await tx.document.update({
+        where: { id: document.id },
+        data: { status: "CHANGES_REQUESTED" },
+        include: { ...DOCUMENT_INCLUDE, logs: true },
+      });
+      await tx.documentLog.create({
+        data: {
+          documentId: document.id,
+          userId: req.user!.id,
+          action: "REQUEST_CHANGE",
+          comment: parsed.data.comment,
+        },
+      });
+      return doc;
+    });
+
+    res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/resubmit", authenticate, async (req, res, next) => {
+  try {
+    const parsed = commentOptionalSchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, "Dữ liệu không hợp lệ");
+
+    const document = await loadDocumentForAction(req.params.id);
+    if (document.creatorId !== req.user!.id) {
+      throw new AppError(403, "Chỉ người tạo mới được nộp lại văn bản này");
+    }
+    if (document.status !== "CHANGES_REQUESTED") {
+      throw new AppError(400, "Văn bản không ở trạng thái chờ chỉnh sửa");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const doc = await tx.document.update({
+        where: { id: document.id },
+        data: { status: "PENDING" },
+        include: { ...DOCUMENT_INCLUDE, logs: true },
+      });
+      await tx.documentLog.create({
+        data: { documentId: document.id, userId: req.user!.id, action: "SUBMIT", comment: parsed.data.comment },
+      });
+      return doc;
+    });
+
+    res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;
