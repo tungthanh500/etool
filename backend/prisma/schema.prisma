@@ -154,7 +154,10 @@ model DocumentLog {
   userId     String
   user       User     @relation(fields: [userId], references: [id])
   action     String   // "SUBMIT", "APPROVE", "REJECT", "REQUEST_CHANGE", "COMMENT"
-  comment    String?  // Ghi nhận ý kiến phản hồi
+  comment    String?  // Ghi nhận ý kiến phản hồi (STEP_SKIPPED: text người-đọc-được, KHÔNG còn là nguồn dữ liệu)
+  // STEP_SKIPPED: { skippedStepOrder: number, reason: "EMPTY" | "ONLY_CREATOR" } — dữ liệu
+  // có cấu trúc thay cho việc regex-parse chuỗi comment (xem lib/leavePdf.ts). Null với log khác.
+  meta       Json?
   createdAt  DateTime @default(now())
 
   @@index([documentId])

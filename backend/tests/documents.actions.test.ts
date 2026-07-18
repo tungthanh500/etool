@@ -198,6 +198,7 @@ describe("Tự động bỏ qua bước (auto-skip)", () => {
     const skipped = res.body.logs.filter((l: { action: string }) => l.action === "STEP_SKIPPED");
     expect(skipped.length).toBe(1);
     expect(skipped[0].comment).toMatch(/^Bỏ qua bước 1/);
+    expect(skipped[0].meta).toEqual({ skippedStepOrder: 1, reason: "ONLY_CREATOR" });
   });
 
   it("EMPTY: hrstaff (Phòng Nhân sự không có Trưởng phòng) tạo GENERAL -> bước 1 skip lý do EMPTY", async () => {
@@ -208,6 +209,7 @@ describe("Tự động bỏ qua bước (auto-skip)", () => {
     expect(skipped.length).toBe(1);
     expect(skipped[0].comment).toMatch(/^Bỏ qua bước 1/);
     expect(skipped[0].comment).toContain("không có người đảm nhiệm");
+    expect(skipped[0].meta).toEqual({ skippedStepOrder: 1, reason: "EMPTY" });
   });
 });
 

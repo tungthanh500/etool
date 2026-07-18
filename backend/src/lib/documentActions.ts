@@ -89,6 +89,7 @@ export async function approveDocument(req: Request) {
           userId: req.user!.id,
           action: "STEP_SKIPPED",
           comment: skipReasonText(s.stepOrder, s.reason),
+          meta: { skippedStepOrder: s.stepOrder, reason: s.reason },
         },
       });
     }
@@ -256,6 +257,7 @@ export async function resubmitDocument(req: Request) {
           userId: req.user!.id,
           action: "STEP_SKIPPED",
           comment: skipReasonText(s.stepOrder, s.reason),
+          meta: { skippedStepOrder: s.stepOrder, reason: s.reason },
         },
       });
     }

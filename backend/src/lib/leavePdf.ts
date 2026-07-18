@@ -66,19 +66,27 @@ function embedImage(pdfDoc: PDFDocument, signatureUrl: string) {
   return null;
 }
 
-// STEP_SKIPPED log ghi lý do dạng text "Bỏ qua bước N — ..." (xem skipReasonText trong
-// routes/documents.ts) — không có cột stepOrder riêng, phải đọc lại từ đầu chuỗi comment.
+// FALLBACK cho dữ liệu lịch sử: log STEP_SKIPPED ghi trước khi có cột meta (Json) chỉ có
+// lý do dạng text "Bỏ qua bước N — ..." (xem skipReasonText). Log mới đọc thẳng meta,
+// hàm này chỉ còn phục vụ log cũ — KHÔNG xoá/đổi chuỗi comment vì fallback phụ thuộc nó.
 function extractSkippedStepOrder(comment: string | null): number | null {
   if (!comment) return null;
   const m = comment.match(/^Bỏ qua bước (\d+)/);
   return m ? Number(m[1]) : null;
 }
 
+// Ưu tiên meta có cấu trúc; fallback regex comment cho log cũ trước migration meta.
+function skippedStepOrderOf(log: LogWithUser): number | null {
+  const meta = log.meta as { skippedStepOrder?: unknown } | null;
+  if (meta && typeof meta.skippedStepOrder === "number") return meta.skippedStepOrder;
+  return extractSkippedStepOrder(log.comment);
+}
+
 type StepWithNames = Pick<WorkflowStep, "stepOrder" | "kind" | "departmentId" | "approverUserId"> & {
   department: { name: string } | null;
   approverUser: { fullName: string } | null;
 };
-type LogWithUser = Pick<DocumentLog, "action" | "comment" | "createdAt"> & {
+type LogWithUser = Pick<DocumentLog, "action" | "comment" | "createdAt" | "meta"> & {
   user: { fullName: string; signatureUrl: string | null };
 };
 
@@ -91,7 +99,7 @@ export function buildLeaveStepRows(steps: StepWithNames[], logs: LogWithUser[]):
   const skippedOrders = new Set(
     logs
       .filter((l) => l.action === "STEP_SKIPPED")
-      .map((l) => extractSkippedStepOrder(l.comment))
+      .map((l) => skippedStepOrderOf(l))
       .filter((n): n is number => n !== null),
   );
 
