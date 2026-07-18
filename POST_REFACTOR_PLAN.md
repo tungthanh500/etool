@@ -147,7 +147,10 @@ Kiểm chứng: mở trang, `sudo systemctl restart etool-backend`, đợi — t
 
 ## GIAI ĐOẠN E — Chất lượng & phòng ngừa hồi quy
 
-### E1. CI GitHub Actions
+### E1. CI GitHub Actions ✅ ĐÃ LÀM (2026-07-18)
+
+> Đã tạo `.github/workflows/ci.yml` (job backend: Postgres service + prisma generate + tsc + `npm test`; job frontend: `npm run build`). Xác nhận chạy xanh trên `main`. CI bắt được 1 lỗi thật: test phụ thuộc ngầm vào `.env` thật vì `lib/push.ts` yêu cầu VAPID lúc import — đã fix bằng cặp VAPID test trong `.env.test`. Mô tả gốc bên dưới giữ làm hồ sơ.
+
 
 `.github/workflows/ci.yml` — chạy trên mọi push/PR vào `main`:
 
