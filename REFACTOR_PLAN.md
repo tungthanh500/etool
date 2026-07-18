@@ -1,5 +1,12 @@
 # REFACTOR_PLAN.md — Tối ưu cấu trúc backend (test trước, tách file sau)
 
+> ✅ **ĐÃ HOÀN TẤT — 2026-07-18.** Cả 3 giai đoạn A/B/C đã thực thi và commit:
+> - **A:** tách `app.ts`; bộ test integration vitest+supertest (19 test, DB `eapproval_test`).
+> - **B:** `documents.ts` 1075 → 625 dòng; tách `lib/documentPdf.ts`, `lib/documentActions.ts`, `lib/documentInclude.ts`.
+> - **C:** thêm `DocumentLog.meta Json?` (migration `add_document_log_meta`); hết regex-parse comment (còn fallback cho log cũ).
+>
+> Kiểm chứng cuối: `npm test` 19/19 xanh, tsc backend & frontend sạch. Phần mô tả kế hoạch bên dưới giữ lại làm hồ sơ.
+>
 > **Người thực thi dự kiến:** Claude Sonnet (reasoning high). Phương án viết để làm được TRỌN VẸN mà không phải đoán — mọi tên file, chữ ký hàm, lệnh kiểm chứng đều ghi rõ. Nếu thực tế code khác với mô tả ở đây (repo có thể đã thay đổi), **tin code, không tin tài liệu**, và ghi chú lại chỗ lệch.
 >
 > **Ngày lập:** 2026-07-18. HEAD lúc lập kế hoạch: `3dd5785` (main, đã push). Toàn bộ đường dẫn tính từ gốc repo `~/etool`.

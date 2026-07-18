@@ -111,9 +111,9 @@
 
 ## NHÓM 4 — Kỹ thuật dài hạn (backlog)
 
-### [R18] Không có test tự động
-- **Xác nhận:** `find` không thấy file `*.test.ts*`/`*.spec.ts*` nào trong `backend/src` hay `frontend/src`. Không có `jest`/`vitest`/`mocha` trong `package.json` của cả backend lẫn frontend.
-- **Trạng thái:** ❌ Chưa fix.
+### [R18] ~~Không có test tự động~~
+- **Xác nhận (cũ):** `find` không thấy file `*.test.ts*`/`*.spec.ts*` nào trong `backend/src` hay `frontend/src`. Không có `jest`/`vitest`/`mocha` trong `package.json` của cả backend lẫn frontend.
+- **Trạng thái:** ✅ **ĐÃ FIX (một phần — backend integration) — 2026-07-18, `REFACTOR_PLAN.md` Giai đoạn A.** Thêm vitest + supertest, DB test riêng `eapproval_test` (guard `tests/setup.ts` chặn chạy nhầm DB thật), fixtures mint token trực tiếp tránh rate limit login. **19 test** phủ: tạo văn bản, luồng duyệt nhiều bước, sai người duyệt (403), duyệt/thu hồi khi không PENDING (400), OCC, reject (±comment), request-change→resubmit (±đúng creator), auto-skip ONLY_CREATOR & EMPTY (kèm `meta`), LEAVE tự sinh PDF ORIGINAL→APPROVED, guard R20, và 2 unit test `buildLeaveStepRows`. Chạy: `cd backend && npm test`. **Còn thiếu:** test frontend (component/e2e) và CI chạy tự động — xem `POST_REFACTOR_PLAN.md` mục E1 (CI GitHub Actions).
 
 ### [R19] WebSocket registry in-memory, không scale nhiều instance
 - **File:** `backend/src/lib/ws.ts` — biến `connections: Map<string, Set<WebSocket>>` sống trong memory của 1 process Node duy nhất, không dùng Redis Pub/Sub hay cơ chế chia sẻ giữa nhiều instance.
@@ -176,7 +176,7 @@
 | R17 | pm2/systemd process manager | 🟠 High | Đang chạy `tsx watch` + Vite dev; go-live cần build production + process manager | **P1 — go-live** |
 | R16 | Health check DB ping | 🟡 Medium | `/health` vẫn trả cứng `{status:"ok"}` | **P2** |
 | R12 | WS reconnect logic | 🟡 Medium | `useWebSocket.ts` chưa có retry/backoff — mất kết nối là im lặng tới khi F5 | **P2** |
-| R18 | Unit/Integration tests | 🔵 Tech debt | — | **Backlog** |
+| R18 | Test tự động (còn thiếu test frontend + CI) | 🔵 Tech debt | Backend integration đã có (19 test); còn frontend + CI (POST_REFACTOR_PLAN E1) | **Một phần** |
 
 ### Đã fix (chi tiết + cách kiểm chứng ở từng mục phía trên)
 
