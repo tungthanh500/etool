@@ -1624,3 +1624,14 @@ Bối cảnh: đêm trước người dùng tự đổi email tài khoản Admin
 ### Trạng thái
 - **Đăng nhập từ giờ**: `admin` / `staff` / `depthead` / `director` / `accountant` (mật khẩu không đổi).
 - Chưa commit gì — chờ người dùng yêu cầu.
+
+---
+
+## Bước 31 — Đồng bộ code lên GitHub (2026-07-18)
+
+Người dùng hoàn tất `gh auth login` (device flow — lần đầu bị kẹt do Ctrl+C giữa chừng làm mã hết hiệu lực, lần 2 thành công; lỗi "Failed opening a web browser" trên server headless là vô hại). Đã thực hiện:
+- Đổi nhánh `master` → `main`.
+- Soát staged trước commit: xác nhận KHÔNG có `.env`/`uploads/`/cookie jar (`.gitignore` che đúng, chỉ `.env.example` được theo dõi).
+- Commit `ecf10b2` gộp toàn bộ Bước 11→30 (92 file, +10.806/−1.280 dòng) — chi tiết từng bước đã có trong file này nên không tách nhiều commit.
+- `gh repo create etool --private --source=. --push` → **https://github.com/tungthanh500/etool** (private, default branch `main`), push thành công, working tree sạch.
+- Từ giờ: mọi thay đổi mới chỉ cần `git add` + `git commit` + `git push` như thường lệ.
