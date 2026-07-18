@@ -118,7 +118,7 @@
 ### [R19] WebSocket registry in-memory, không scale nhiều instance
 - **File:** `backend/src/lib/ws.ts` — biến `connections: Map<string, Set<WebSocket>>` sống trong memory của 1 process Node duy nhất, không dùng Redis Pub/Sub hay cơ chế chia sẻ giữa nhiều instance.
 - **Ghi chú:** Hiện hệ thống chỉ chạy 1 instance nên chưa phải vấn đề thực tế, chỉ là giới hạn khi scale ngang sau này.
-- **Trạng thái:** ❌ Chưa fix (chưa cấp thiết).
+- **Trạng thái:** ✅ **CHẤP NHẬN CÓ CHỦ ĐÍCH — 2026-07-18.** Xác nhận với người dùng: công ty quy mô hơn 30 nhân viên, không có kế hoạch triển khai đa instance. Ở quy mô này, 1 process Node xử lý thoải mái toàn bộ kết nối WebSocket (ước tính tối đa ~90 kết nối đồng thời kể cả mỗi người mở 3 tab) — không chạm ngưỡng cần scale ngang (số kết nối lớn, CPU-bound, HA/zero-downtime, hay phân tán địa lý). Toàn bộ kiến trúc (`POST_REFACTOR_PLAN.md`) cũng nhất quán thiết kế 1 instance: Postgres 1 container, backend 1 unit systemd, upload lưu đĩa cục bộ — không riêng WS registry. Điều kiện để fix lại: có quyết định thật sự chạy ≥2 instance backend, lúc đó phải sửa đồng thời cả WS registry (Redis Pub/Sub), file storage (object storage dùng chung), và connection pooling Postgres.
 
 ### [R20] ~~Workflow bị sửa giữa chừng khi document đang PENDING~~
 - **Đánh giá cũ (2026-07-16, đã lỗi thời):** khi đó chưa có route admin nào sửa Workflow → rủi ro = 0.
@@ -177,7 +177,6 @@
 | R16 | Health check DB ping | 🟡 Medium | `/health` vẫn trả cứng `{status:"ok"}` | **P2** |
 | R12 | WS reconnect logic | 🟡 Medium | `useWebSocket.ts` chưa có retry/backoff — mất kết nối là im lặng tới khi F5 | **P2** |
 | R18 | Unit/Integration tests | 🔵 Tech debt | — | **Backlog** |
-| R19 | Redis Pub/Sub cho WebSocket | 🔵 Tech debt | Chỉ cần khi scale nhiều instance | **Backlog** |
 
 ### Đã fix (chi tiết + cách kiểm chứng ở từng mục phía trên)
 
@@ -194,6 +193,7 @@
 | R10 | Pagination API | Mục 3.2, 2026-07-17 |
 | R11 | Vô hiệu hoá user (`isActive`) | Giai đoạn 1, 2026-07-16 |
 | R13 | Audit log quản trị user | Bước 12, 2026-07-16 + mở rộng các bước sau |
+| R19 | Redis Pub/Sub cho WebSocket | **Chấp nhận có chủ đích**, 2026-07-18 — quy mô 30+ nhân viên, không kế hoạch đa instance |
 | R15 | Backup DB + uploads tự động | Mục 3.4 + Bước 24A, 2026-07-17 |
 | R21 | Xác nhận + ý kiến khi Duyệt | Bước 29, 2026-07-17 |
 | R22 | Hiển thị `formData` trang chi tiết | Bước 29, 2026-07-17 |
