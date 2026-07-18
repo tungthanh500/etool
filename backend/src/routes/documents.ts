@@ -10,13 +10,22 @@ import { upload, UPLOAD_DIR, verifyMagicBytes } from "../lib/upload";
 import { AppError } from "../lib/errors";
 import { authenticate } from "../middlewares/authenticate";
 import { authorize } from "../middlewares/authorize";
-import { canViewDocument, findActingDelegator, getActiveDelegators, isCurrentApprover } from "../lib/workflow";
+import {
+  buildPendingWorkflowFilter,
+  canViewDocument,
+  findActingDelegator,
+  getActiveDelegators,
+  isCurrentApprover,
+  resolveEffectiveStep,
+} from "../lib/workflow";
+import { deriveTitle, validateDocumentForm } from "../lib/documentForms";
 import { getNotifiableUserIds, notify } from "../lib/notifications";
 import { audit } from "../lib/audit";
 import { currentYearVN, dayEndVN, dayStartVN, formatDateTimeVN } from "../lib/dateUtils";
 import { statusLabelVN, typeLabelVN } from "../lib/labels";
 import { stampApprovedPdf } from "../lib/stamp";
 import type { ApproverInfo } from "../lib/stamp";
+import { buildLeavePdf, buildLeaveStepRows } from "../lib/leavePdf";
 
 const router = Router();
 
@@ -25,7 +34,17 @@ const SAFE_CREATOR_SELECT = { id: true, fullName: true, email: true, departmentI
 const DOCUMENT_INCLUDE = {
   attachments: true,
   creator: { select: SAFE_CREATOR_SELECT },
-  workflow: { include: { steps: { orderBy: { stepOrder: "asc" as const } } } },
+  workflow: {
+    include: {
+      steps: {
+        orderBy: { stepOrder: "asc" as const },
+        include: {
+          department: { select: { id: true, name: true } },
+          approverUser: { select: { id: true, fullName: true } },
+        },
+      },
+    },
+  },
 };
 
 // Join user vào mỗi log để timeline hiển thị được ai đã submit/duyệt/bình luận.
@@ -81,8 +100,17 @@ function parseListQuery(req: import("express").Request, extraWhere: Prisma.Docum
   return { page, limit, where };
 }
 
+// Nội dung log STEP_SKIPPED (mục 5.6B) — ghi rõ lý do để timeline minh bạch, không phải
+// một bước "biến mất" âm thầm.
+function skipReasonText(stepOrder: number, reason: "EMPTY" | "ONLY_CREATOR"): string {
+  const why = reason === "ONLY_CREATOR" ? "người tạo là người duyệt" : "không có người đảm nhiệm";
+  return `Bỏ qua bước ${stepOrder} — ${why}`;
+}
+
+// title tuỳ chọn: LEAVE/PAYMENT tự sinh tiêu đề từ formData (deriveTitle) — bắt buộc
+// gõ tay chỉ áp dụng cho GENERAL/PURCHASE/loại tuỳ biến, kiểm tra sau khi biết type.
 const createDocumentSchema = z.object({
-  title: z.string().min(1, "Thiếu tiêu đề"),
+  title: z.string().trim().optional(),
   type: z.string().trim().min(1, "Thiếu loại văn bản"),
   formData: z.string().optional(),
 });
@@ -100,23 +128,51 @@ router.post(
       if (!parsed.success) {
         throw new AppError(400, "Dữ liệu văn bản không hợp lệ");
       }
-      const { title, type } = parsed.data;
+      const { type } = parsed.data;
 
-      let formData: unknown = {};
+      let formDataRaw: unknown = {};
       if (parsed.data.formData) {
         try {
-          formData = JSON.parse(parsed.data.formData);
+          formDataRaw = JSON.parse(parsed.data.formData);
         } catch {
           throw new AppError(400, "formData phải là chuỗi JSON hợp lệ");
         }
-        if (typeof formData !== "object" || formData === null || Array.isArray(formData)) {
-          throw new AppError(400, "formData phải là một object JSON");
-        }
+      }
+      // Validate + tính trường dẫn xuất (soNgay, tongTien...) theo đúng schema của type (mục 5.1).
+      const formData = validateDocumentForm(type, formDataRaw);
+
+      // LEAVE/PAYMENT tự sinh tiêu đề từ formData — bỏ qua title client gửi (nếu có).
+      const derivedTitle = deriveTitle(type, formData as Record<string, unknown>, req.user!.fullName);
+      const title = derivedTitle ?? parsed.data.title;
+      if (!title || !title.trim()) {
+        throw new AppError(400, "Thiếu tiêu đề");
       }
 
-      const workflow = await prisma.workflow.findFirst({ where: { name: type } });
+      // "Đơn hàng": người duyệt chỉ xem file để quyết định — bắt buộc có ít nhất 1 file.
+      if (type === "PURCHASE" && files.length === 0) {
+        throw new AppError(400, "Đơn hàng cần đính kèm ít nhất 1 file");
+      }
+
+      const workflow = await prisma.workflow.findFirst({
+        where: { name: type },
+        include: { steps: true },
+      });
       if (!workflow) {
         throw new AppError(500, `Chưa cấu hình quy trình duyệt cho loại văn bản "${type}"`);
+      }
+
+      // Quy tắc tự động bỏ qua bước (mục 5.6B), tính trước khi tạo: bước nào không có
+      // ai đủ điều kiện duyệt, hoặc người đủ điều kiện duy nhất chính là người tạo, thì
+      // bỏ qua. Nếu bỏ hết mọi bước → không tạo được văn bản, tránh hồ sơ kẹt vĩnh viễn
+      // không ai thấy.
+      const skipResult = await resolveEffectiveStep(
+        workflow.steps,
+        1,
+        req.user!.id,
+        req.user!.departmentId,
+      );
+      if (skipResult.finalStepOrder === null) {
+        throw new AppError(400, "Luồng duyệt không có người duyệt hợp lệ cho văn bản này");
       }
 
       const document = await prisma.$transaction(async (tx) => {
@@ -131,14 +187,14 @@ router.post(
         });
         const docNo = `VB-${year}-${String(counter.seq).padStart(4, "0")}`;
 
-        return tx.document.create({
+        const created = await tx.document.create({
           data: {
             docNo,
             title,
             type,
             formData: formData as object,
             status: "PENDING",
-            currentStep: 1,
+            currentStep: skipResult.finalStepOrder!,
             creatorId: req.user!.id,
             workflowId: workflow.id,
             attachments: {
@@ -155,23 +211,49 @@ router.post(
               },
             },
           },
+        });
+
+        for (const s of skipResult.skipped) {
+          await tx.documentLog.create({
+            data: {
+              documentId: created.id,
+              userId: req.user!.id,
+              action: "STEP_SKIPPED",
+              comment: skipReasonText(s.stepOrder, s.reason),
+            },
+          });
+        }
+
+        return tx.document.findUniqueOrThrow({
+          where: { id: created.id },
           include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
         });
       });
 
-      notify(await getNotifiableUserIds(document, req.user!.id), {
+      // LEAVE không có file người dùng upload — tự sinh PDF đơn làm Attachment thay thế
+      // (mục 5.2). Khu PHẦN PHÊ DUYỆT để trống/chờ, trừ bước nào vừa bị auto-skip ở trên.
+      let responseDocument = document;
+      if (type === "LEAVE") {
+        await generateLeavePdfAttachment(document, "ORIGINAL");
+        responseDocument = await prisma.document.findUniqueOrThrow({
+          where: { id: document.id },
+          include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
+        });
+      }
+
+      notify(await getNotifiableUserIds(responseDocument, req.user!.id), {
         type: "document:created",
-        documentId: document.id,
-        title: document.title,
+        documentId: responseDocument.id,
+        title: responseDocument.title,
         actorName: req.user!.fullName,
       });
 
-      audit({ req, category: "DOCUMENT", action: "SUBMIT", targetType: "document", targetId: document.id, detail: document.title });
+      audit({ req, category: "DOCUMENT", action: "SUBMIT", targetType: "document", targetId: responseDocument.id, detail: responseDocument.title });
       for (const f of files) {
-        audit({ req, category: "FILE", action: "FILE_UPLOAD", targetType: "document", targetId: document.id, detail: f.originalname });
+        audit({ req, category: "FILE", action: "FILE_UPLOAD", targetType: "document", targetId: responseDocument.id, detail: f.originalname });
       }
 
-      res.status(201).json({ ...document, canApprove: isCurrentApprover(document, req.user!) });
+      res.status(201).json({ ...responseDocument, canApprove: isCurrentApprover(responseDocument, req.user!) });
     } catch (err) {
       // Multer đã ghi file lên đĩa trước khi handler chạy — nếu bất kỳ bước nào
       // sau đó thất bại (validate, workflow thiếu, lỗi DB), phải dọn file rác.
@@ -217,16 +299,19 @@ router.patch(
         throw new AppError(400, "Văn bản không ở trạng thái chờ chỉnh sửa");
       }
 
-      let formData: unknown | undefined;
+      let formData: object | undefined;
+      let derivedTitle: string | null = null;
       if (formDataRaw !== undefined) {
+        let formDataParsed: unknown;
         try {
-          formData = JSON.parse(formDataRaw);
+          formDataParsed = JSON.parse(formDataRaw);
         } catch {
           throw new AppError(400, "formData phải là chuỗi JSON hợp lệ");
         }
-        if (typeof formData !== "object" || formData === null || Array.isArray(formData)) {
-          throw new AppError(400, "formData phải là một object JSON");
-        }
+        // Cùng schema + tính lại trường dẫn xuất như lúc tạo (mục 5.1) — type không đổi
+        // được sau khi tạo nên luôn biết đúng schema cần áp dụng.
+        formData = validateDocumentForm(document.type, formDataParsed);
+        derivedTitle = deriveTitle(document.type, formData as Record<string, unknown>, document.creator.fullName);
       }
 
       let removeAttachmentIds: string[] = [];
@@ -246,6 +331,17 @@ router.patch(
       const attachmentsToRemove = document.attachments.filter(
         (a) => removeAttachmentIds.includes(a.id) && a.kind !== "APPROVED",
       );
+
+      // "Đơn hàng" bắt buộc còn ít nhất 1 file sau khi sửa — không cho xoá hết mà không bù lại.
+      if (document.type === "PURCHASE") {
+        const remaining =
+          document.attachments.filter((a) => a.kind !== "APPROVED").length -
+          attachmentsToRemove.length +
+          newFiles.length;
+        if (remaining <= 0) {
+          throw new AppError(400, "Đơn hàng cần đính kèm ít nhất 1 file");
+        }
+      }
 
       const updated = await prisma.$transaction(async (tx) => {
         if (attachmentsToRemove.length > 0) {
@@ -269,8 +365,8 @@ router.patch(
         return tx.document.update({
           where: { id: document.id },
           data: {
-            ...(title !== undefined ? { title } : {}),
-            ...(formData !== undefined ? { formData: formData as object } : {}),
+            ...(derivedTitle !== null ? { title: derivedTitle } : title !== undefined ? { title } : {}),
+            ...(formData !== undefined ? { formData } : {}),
           },
           include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
         });
@@ -344,15 +440,14 @@ router.get("/", authenticate, authorize("document:read:own"), async (req, res, n
 // dữ liệu hiện tại (nội bộ, không phải hàng chục nghìn hồ sơ PENDING đồng thời).
 router.get("/pending", authenticate, async (req, res, next) => {
   try {
-    // Lọc thô ở DB phải gồm CẢ role của những người đang uỷ quyền cho mình (mục 4.1) —
-    // nếu chỉ lọc theo role bản thân, hồ sơ chỉ duyệt được qua uỷ quyền sẽ bị bỏ sót
+    // Lọc thô ở DB phải gồm CẢ vị trí của những người đang uỷ quyền cho mình (mục 4.1) —
+    // nếu chỉ lọc theo vị trí bản thân, hồ sơ chỉ duyệt được qua uỷ quyền sẽ bị bỏ sót
     // trước khi tới bước hậu kiểm isCurrentApprover.
     const delegators = await getActiveDelegators(req.user!.id);
-    const roleNames = [...new Set([req.user!.role.name, ...delegators.map((d) => d.role.name)])];
 
     const { page, limit, where } = parseListQuery(req, {
       status: "PENDING",
-      workflow: { steps: { some: { approverRole: { in: roleNames } } } },
+      workflow: buildPendingWorkflowFilter(req.user!, delegators),
     });
 
     const candidates = await prisma.document.findMany({
@@ -506,6 +601,77 @@ async function loadDocumentForAction(id: string) {
   return document;
 }
 
+// Sinh PDF đơn xin nghỉ phép (mục 5.2) — LEAVE không có file người dùng upload (file
+// policy "hidden"), nên tự sinh Attachment PDF thay thế. kind="ORIGINAL" lúc vừa nộp đơn
+// (khu PHẦN PHÊ DUYỆT để trống/chờ theo đúng log tại thời điểm gọi — có thể đã có bước bị
+// auto-skip ngay từ đầu); kind="APPROVED" lúc duyệt xong bước cuối (mọi bước đã ĐÃ DUYỆT
+// hoặc Bỏ qua, không còn "(Chưa duyệt)"). Khác autoStampApprovedPdfs (2.4/2.5): LEAVE
+// regenerate TOÀN BỘ 1 trang, không chèn trang bìa/phụ lục — đúng yêu cầu nghiệp vụ.
+// Lỗi sinh PDF KHÔNG được chặn hành động chính (nộp/duyệt) — chỉ log lại.
+async function generateLeavePdfAttachment(
+  document: {
+    id: string;
+    docNo: string | null;
+    createdAt: Date;
+    creatorId: string;
+    formData: unknown;
+    workflow: { steps: Parameters<typeof buildLeaveStepRows>[0] };
+  },
+  kind: "ORIGINAL" | "APPROVED",
+): Promise<void> {
+  try {
+    const creator = await prisma.user.findUnique({
+      where: { id: document.creatorId },
+      select: { fullName: true, signatureUrl: true, department: { select: { name: true } } },
+    });
+    if (!creator) return;
+
+    // Log riêng (không dùng document.logs sẵn có) vì cần signatureUrl của người duyệt —
+    // LOGS_INCLUDE dùng chung toàn route chỉ select SAFE_CREATOR_SELECT, không có trường đó.
+    const logs = await prisma.documentLog.findMany({
+      where: { documentId: document.id, action: { in: ["APPROVE", "STEP_SKIPPED"] } },
+      orderBy: { createdAt: "asc" },
+      include: { user: { select: { fullName: true, signatureUrl: true } } },
+    });
+
+    const formData = document.formData as {
+      tuNgay: string;
+      denNgay: string;
+      soNgay: number;
+      loaiNghi: string;
+      lyDo?: string;
+    };
+    const rows = buildLeaveStepRows(document.workflow.steps, logs);
+    const pdfBytes = await buildLeavePdf({
+      docNo: document.docNo,
+      fullName: creator.fullName,
+      departmentName: creator.department.name,
+      tuNgay: formData.tuNgay,
+      denNgay: formData.denNgay,
+      soNgay: formData.soNgay,
+      loaiNghi: formData.loaiNghi,
+      lyDo: formData.lyDo,
+      createdAt: document.createdAt,
+      requesterSignatureUrl: creator.signatureUrl,
+      steps: rows,
+    });
+
+    const filename = `${crypto.randomUUID()}.pdf`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, filename), pdfBytes);
+    await prisma.attachment.create({
+      data: {
+        documentId: document.id,
+        fileName: kind === "APPROVED" ? "Don-xin-nghi-phep-da-duyet.pdf" : "Don-xin-nghi-phep.pdf",
+        fileUrl: filename,
+        mimeType: "application/pdf",
+        kind,
+      },
+    });
+  } catch (err) {
+    console.error(`Lỗi sinh PDF đơn nghỉ phép cho văn bản ${document.id}:`, err);
+  }
+}
+
 // Tự động đóng dấu "ĐÃ PHÊ DUYỆT" + khối chữ ký (mục 2.4/2.5) khi hồ sơ vừa chuyển
 // APPROVED và người duyệt cuối KHÔNG tự tay đính kèm bản đã ký. Chạy sau khi transaction
 // duyệt đã commit (không giữ transaction lâu chờ xử lý PDF); lỗi đóng dấu KHÔNG được
@@ -580,8 +746,15 @@ router.post("/:id/approve", authenticate, upload.single("approvedFile"), verifyM
     const delegationNote = actingDelegator ? `(duyệt thay — uỷ quyền bởi ${actingDelegator.fullName})` : null;
     const logComment = [parsed.data.comment, delegationNote].filter(Boolean).join(" ") || undefined;
 
-    const nextStep = document.workflow.steps.find((s) => s.stepOrder === document.currentStep + 1);
-    const isFinalApproval = !nextStep;
+    // Quy tắc tự động bỏ qua bước (5.6B): tìm bước "thật" tiếp theo từ currentStep+1,
+    // bỏ qua bước nào rỗng người duyệt hoặc chỉ có đúng người tạo. Hết bước -> APPROVED.
+    const skipResult = await resolveEffectiveStep(
+      document.workflow.steps,
+      document.currentStep + 1,
+      document.creatorId,
+      document.creator.departmentId,
+    );
+    const isFinalApproval = skipResult.finalStepOrder === null;
 
     // Bản đã ký chỉ được đính kèm ở bước duyệt cuối (khi hồ sơ chuyển sang APPROVED).
     if (approvedFile && !isFinalApproval) {
@@ -596,6 +769,16 @@ router.post("/:id/approve", authenticate, upload.single("approvedFile"), verifyM
       await tx.documentLog.create({
         data: { documentId: document.id, userId: req.user!.id, action: "APPROVE", comment: logComment },
       });
+      for (const s of skipResult.skipped) {
+        await tx.documentLog.create({
+          data: {
+            documentId: document.id,
+            userId: req.user!.id,
+            action: "STEP_SKIPPED",
+            comment: skipReasonText(s.stepOrder, s.reason),
+          },
+        });
+      }
       if (approvedFile && isFinalApproval) {
         await tx.attachment.create({
           data: {
@@ -609,7 +792,7 @@ router.post("/:id/approve", authenticate, upload.single("approvedFile"), verifyM
       }
       return tx.document.update({
         where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
-        data: nextStep ? { currentStep: document.currentStep + 1 } : { status: "APPROVED" },
+        data: isFinalApproval ? { status: "APPROVED" } : { currentStep: skipResult.finalStepOrder! },
         include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
     });
@@ -629,7 +812,13 @@ router.post("/:id/approve", authenticate, upload.single("approvedFile"), verifyM
     // Không có bản ký tay do người duyệt cuối tự đính kèm → tự sinh bản PDF đóng dấu.
     let responseDoc = updated;
     if (updated.status === "APPROVED" && !approvedFile) {
-      await autoStampApprovedPdfs(req, updated);
+      // LEAVE: regenerate toàn bộ PDF (khu PHẦN PHÊ DUYỆT điền đầy đủ) — không chèn
+      // trang bìa/phụ lục như 2.4/2.5, xem generateLeavePdfAttachment (mục 5.2).
+      if (updated.type === "LEAVE") {
+        await generateLeavePdfAttachment(updated, "APPROVED");
+      } else {
+        await autoStampApprovedPdfs(req, updated);
+      }
       responseDoc = await loadDocumentForAction(updated.id);
     }
 
@@ -750,26 +939,63 @@ router.post("/:id/resubmit", authenticate, async (req, res, next) => {
       throw new AppError(400, "Văn bản không ở trạng thái chờ chỉnh sửa");
     }
 
+    // Re-đánh giá tự động bỏ qua bước (5.6B) TỪ currentStep hiện tại (không phải +1) —
+    // người phụ trách bước đó có thể đã đổi (khoá tài khoản, đổi phòng ban...) giữa lúc
+    // yêu cầu chỉnh sửa và lúc nộp lại. Nếu mọi bước còn lại đều bị bỏ qua -> coi như đã
+    // qua hết người duyệt thật, chuyển thẳng APPROVED.
+    const skipResult = await resolveEffectiveStep(
+      document.workflow.steps,
+      document.currentStep,
+      document.creatorId,
+      document.creator.departmentId,
+    );
+    const isNowApproved = skipResult.finalStepOrder === null;
+
     const updated = await prisma.$transaction(async (tx) => {
       await tx.documentLog.create({
         data: { documentId: document.id, userId: req.user!.id, action: "SUBMIT", comment: parsed.data.comment },
       });
+      for (const s of skipResult.skipped) {
+        await tx.documentLog.create({
+          data: {
+            documentId: document.id,
+            userId: req.user!.id,
+            action: "STEP_SKIPPED",
+            comment: skipReasonText(s.stepOrder, s.reason),
+          },
+        });
+      }
       return tx.document.update({
         where: { id: document.id, status: "CHANGES_REQUESTED" },
-        data: { status: "PENDING" },
+        data: isNowApproved
+          ? { status: "APPROVED" }
+          : { status: "PENDING", currentStep: skipResult.finalStepOrder! },
         include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },
       });
     });
 
     notify(await getNotifiableUserIds(updated, req.user!.id), {
-      type: "document:resubmitted",
+      type: isNowApproved ? "document:approved" : "document:resubmitted",
       documentId: updated.id,
       title: updated.title,
       actorName: req.user!.fullName,
     });
 
     audit({ req, category: "DOCUMENT", action: "RESUBMIT", targetType: "document", targetId: updated.id, detail: updated.title });
-    res.json({ ...updated, canApprove: isCurrentApprover(updated, req.user!) });
+
+    // Nộp lại mà auto-skip hết bước còn lại -> coi như vừa duyệt xong, cần đóng dấu PDF
+    // tự động y hệt luồng duyệt bình thường (2.4/2.5) — không ai bấm "Duyệt" để kích hoạt.
+    let responseDoc = updated;
+    if (isNowApproved) {
+      if (updated.type === "LEAVE") {
+        await generateLeavePdfAttachment(updated, "APPROVED");
+      } else {
+        await autoStampApprovedPdfs(req, updated);
+      }
+      responseDoc = await loadDocumentForAction(updated.id);
+    }
+
+    res.json({ ...responseDoc, canApprove: isCurrentApprover(responseDoc, req.user!) });
   } catch (err) {
     next(err);
   }

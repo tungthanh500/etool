@@ -35,6 +35,9 @@ model User {
   delegationsGiven    Delegation[] @relation("DelegationsGiven")
   delegationsReceived Delegation[] @relation("DelegationsReceived")
   notifications Notification[]
+  // Bước duyệt (mục 5.6) chỉ định ĐÍCH DANH user này là người duyệt — không liên quan
+  // gì tới quyền role, chỉ là 1 vị trí cấu hình trong 1 luồng duyệt cụ thể.
+  approvingSteps WorkflowStep[] @relation("StepApproverUser")
 
   @@index([roleId])
   @@index([departmentId])
@@ -71,6 +74,7 @@ model Department {
   id    String @id @default(uuid())
   name  String @unique
   users User[]
+  workflowSteps WorkflowStep[]
 }
 
 model Document {
@@ -121,14 +125,26 @@ model Workflow {
   documents   Document[]
 }
 
+// Mô hình bước duyệt (mục 5.6, thay hẳn "approverRole" cũ — quyền duyệt giờ đến từ
+// VỊ TRÍ trong luồng, không còn từ role của user):
+// - CREATOR_DEPT_HEAD: người duyệt là Trưởng phòng CÙNG phòng ban với người tạo văn bản
+//   (departmentId/approverUserId đều NULL — phòng ban xác định động theo từng văn bản).
+// - DEPARTMENT: chọn sẵn 1 phòng ban (departmentId bắt buộc). approverUserId có giá trị
+//   → CHỈ đích danh user đó duyệt được; NULL → BẤT KỲ thành viên active nào của phòng đó.
 model WorkflowStep {
-  id           String   @id @default(uuid())
-  workflowId   String
-  workflow     Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  stepOrder    Int      // Thứ tự bước (1, 2, 3...)
-  approverRole String   // Vai trò được quyền duyệt bước này (ví dụ: "Dept_Head")
+  id             String      @id @default(uuid())
+  workflowId     String
+  workflow       Workflow    @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepOrder      Int         // Thứ tự bước (1, 2, 3...)
+  kind           String      // "CREATOR_DEPT_HEAD" | "DEPARTMENT"
+  departmentId   String?
+  department     Department? @relation(fields: [departmentId], references: [id])
+  approverUserId String?
+  approverUser   User?       @relation("StepApproverUser", fields: [approverUserId], references: [id])
 
   @@index([workflowId])
+  @@index([departmentId])
+  @@index([approverUserId])
 }
 
 model DocumentLog {

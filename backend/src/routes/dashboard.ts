@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Document, WorkflowStep } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { authenticate } from "../middlewares/authenticate";
-import { getActiveDelegators, isCurrentApprover } from "../lib/workflow";
+import { buildPendingWorkflowFilter, getActiveDelegators, isCurrentApprover } from "../lib/workflow";
 import { lastSixMonthsVN } from "../lib/dateUtils";
 
 const router = Router();
@@ -41,15 +41,14 @@ router.get("/", authenticate, async (req, res, next) => {
     const myByStatus = toStatusMap(myGroups);
     const myTotal = myGroups.reduce((sum, g) => sum + g._count._all, 0);
 
-    // Số hồ sơ đang chờ CHÍNH user này duyệt — lọc thô ở DB theo role (gồm cả role
-    // của người đang uỷ quyền cho mình, mục 4.1) rồi hậu kiểm isCurrentApprover
-    // (đúng bước hiện tại + Dept_Head cùng phòng ban), như route /pending.
+    // Số hồ sơ đang chờ CHÍNH user này duyệt — lọc thô ở DB theo vị trí trong luồng (gồm
+    // cả vị trí của người đang uỷ quyền cho mình, mục 4.1) rồi hậu kiểm isCurrentApprover
+    // (đúng bước hiện tại), như route /pending.
     const delegators = await getActiveDelegators(user.id);
-    const roleNames = [...new Set([user.role.name, ...delegators.map((d) => d.role.name)])];
     const pendingCandidates = (await prisma.document.findMany({
       where: {
         status: "PENDING",
-        workflow: { steps: { some: { approverRole: { in: roleNames } } } },
+        workflow: buildPendingWorkflowFilter(user, delegators),
       },
       include: {
         workflow: { include: { steps: { orderBy: { stepOrder: "asc" } } } },

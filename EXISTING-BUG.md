@@ -84,9 +84,9 @@
 - **File:** `backend/src/routes/users.ts` — `PATCH /:id` cho phép đổi `roleId`/`departmentId`/`password` nhưng không ghi lại ai đã đổi, đổi từ gì sang gì, lúc nào (khác với `DocumentLog` chỉ theo dõi hành động trên văn bản, không theo dõi hành động quản trị user).
 - **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16, Bước 12 (AuditLog toàn hệ thống, chưa commit) + mở rộng ở các bước sau.** `lib/audit.ts` + bảng `AuditLog`; `users.ts` ghi `USER_CREATE`/`USER_UPDATE`/`USER_ENABLE`/`USER_DISABLE`; các hành động quản trị khác cũng phủ audit (`DEPT_*`, `WORKFLOW_*`, `DELEGATION_*`, `AUTH`, `FILE`...); trang `/audit` cho Admin tra cứu.
 
-### [R14] `formData` không có schema validation theo từng loại văn bản
+### [R14] ~~`formData` không có schema validation theo từng loại văn bản~~
 - **File:** `backend/src/routes/documents.ts:29-59` — chỉ kiểm tra `formData` là JSON string hợp lệ và là object (không phải array/null), không validate cấu trúc cụ thể theo `type` (`PURCHASE`/`PAYMENT`/`GENERAL`).
-- **Trạng thái:** ❌ Chưa fix — chờ spec cụ thể từng loại form nếu cần làm.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-18, Giai đoạn 5 mục 5.1 (chưa commit).** `lib/documentForms.ts` — zod schema riêng cho từng loại chuẩn (GENERAL/PURCHASE/PAYMENT/LEAVE), validate ở cả POST lẫn PATCH; trường dẫn xuất (tổng tiền, số ngày nghỉ) server tự tính lại, không tin client. Ô "Dữ liệu form (JSON — nâng cao)" đã bỏ hẳn khỏi UI, thay bằng form thật theo từng loại. Loại tuỳ biến ngoài 4 loại chuẩn (Admin tự tạo qua Workflow Builder) vẫn fallback nhận JSON tự do như cũ.
 
 ---
 
@@ -119,11 +119,10 @@
 - **Ghi chú:** Hiện hệ thống chỉ chạy 1 instance nên chưa phải vấn đề thực tế, chỉ là giới hạn khi scale ngang sau này.
 - **Trạng thái:** ❌ Chưa fix (chưa cấp thiết).
 
-### [R20] Workflow bị sửa giữa chừng khi document đang PENDING
+### [R20] ~~Workflow bị sửa giữa chừng khi document đang PENDING~~
 - **Đánh giá cũ (2026-07-16, đã lỗi thời):** khi đó chưa có route admin nào sửa Workflow → rủi ro = 0.
-- **⚠️ ĐÁNH GIÁ LẠI 2026-07-17 — RỦI RO ĐÃ THÀNH HIỆN THỰC:** từ Bước 11, trang quản trị Workflow Builder + `PATCH /api/workflows/:id` đã tồn tại và **thay toàn bộ steps** (`deleteMany` + `createMany`) **không có guard** kiểm tra hồ sơ PENDING đang dùng workflow đó. Sửa flow khi có hồ sơ đang duyệt dở → `currentStep` có thể trỏ tới bước không còn tồn tại hoặc đổi role người duyệt giữa chừng. (`DELETE /:id` thì đã an toàn — FK chặn, trả 409 khi có văn bản dùng.)
-- **Hướng fix đề xuất:** trong `PATCH`, nếu payload có `steps` → đếm `document.count({workflowId, status: "PENDING"})`, > 0 thì trả 409 "Không thể sửa các bước: đang có văn bản chờ duyệt dùng luồng này" (vẫn cho sửa `description`).
-- **Trạng thái:** ❌ Chưa fix — **nâng ưu tiên P3 → P2** vì đã kích hoạt được qua UI thật.
+- **⚠️ ĐÁNH GIÁ LẠI 2026-07-17 — RỦI RO ĐÃ THÀNH HIỆN THỰC:** từ Bước 11, trang quản trị Workflow Builder + `PATCH /api/workflows/:id` đã tồn tại và **thay toàn bộ steps** (`deleteMany` + `createMany`) **không có guard** kiểm tra hồ sơ PENDING đang dùng workflow đó.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-18, Giai đoạn 5 mục 5.6 (chưa commit).** Đúng hướng đề xuất: `PATCH` có `steps` → đếm `document.count({workflowId, status:"PENDING"})`, >0 → 409 "Không thể sửa các bước: đang có văn bản chờ duyệt dùng luồng này" (vẫn cho sửa `description` riêng). Kiểm chứng qua curl thật (tạo văn bản PENDING → PATCH steps → 409; PATCH chỉ description → 200).
 
 ---
 
@@ -157,6 +156,15 @@
 
 ---
 
+## NHÓM 6 — Phát hiện trong lúc xây Giai đoạn 5 (2026-07-18)
+
+### [R28] ~~`prisma/seed.ts` ghi đè dữ liệu thật khi chạy lại trên môi trường đã có user/workflow thật~~
+- **Sự cố có thật đã xảy ra:** chạy `npx tsx prisma/seed.ts` (chỉ định thêm "Phòng Nhân sự" cho mục 5.1) đã vô tình: (1) hồi sinh 4 tài khoản demo cũ (`staff`/`depthead`/`director`/`accountant`) — email demo không còn tồn tại trong DB thật nên `upsert` coi là tạo mới; (2) **ghi đè bước duyệt Director/Accountant của GENERAL/PAYMENT/PURCHASE** từ đích danh "Eng Han Liang" (thật, do Admin tự cấu hình qua UI) sang các user demo giả — vì vòng lặp WORKFLOWS trong seed.ts **unconditionally xoá + tạo lại steps của MỌI workflow mỗi lần chạy**, kể cả workflow đã tồn tại và đã được tuỳ chỉnh thật.
+- **Khắc phục:** khôi phục 3 workflow qua API (`PATCH /workflows`, có audit); vô hiệu hoá rồi xoá 4 user demo hồi sinh (qua API hợp lệ, có xác nhận người dùng trước khi xoá hẳn).
+- **Trạng thái:** ✅ **ĐÃ FIX TẬN GỐC — 2026-07-18 (chưa commit).** `seed.ts`: bỏ hẳn 4 user demo khỏi danh sách (chỉ còn `admin` + `hr`); vòng lặp WORKFLOWS đổi sang **bỏ qua hoàn toàn** workflow đã tồn tại (không đụng description lẫn steps) — seed giờ chỉ lo khởi tạo lần đầu, không còn là "nguồn sự thật" ghi đè cấu hình môi trường đang chạy thật. **Bài học ghi lại trong code:** không giả định "seed lại vô hại" một khi hệ thống đã có dữ liệu vận hành thật.
+
+---
+
 ## Bảng tóm tắt theo mức ưu tiên (cập nhật 2026-07-17 — rà trực tiếp trên code)
 
 ### Còn mở
@@ -165,10 +173,8 @@
 |---|---|---|---|---|
 | R06 | HTTPS / Nginx | 🟠 High | Làm lúc triển khai (cần cert/domain); cũng là điều kiện để Web Push chạy trên trình duyệt thật | **P1 — go-live** |
 | R17 | pm2/systemd process manager | 🟠 High | Đang chạy `tsx watch` + Vite dev; go-live cần build production + process manager | **P1 — go-live** |
-| R20 | Guard sửa Workflow khi có doc PENDING | 🟡 Medium | ⚠️ Rủi ro thành hiện thực từ Bước 11 (Workflow Builder) — xem hướng fix trong mục | **P2** |
 | R16 | Health check DB ping | 🟡 Medium | `/health` vẫn trả cứng `{status:"ok"}` | **P2** |
 | R12 | WS reconnect logic | 🟡 Medium | `useWebSocket.ts` chưa có retry/backoff — mất kết nối là im lặng tới khi F5 | **P2** |
-| R14 | `formData` schema theo loại văn bản | 🟡 Medium | Chờ spec từng loại form | **P3 (chờ spec)** |
 | R18 | Unit/Integration tests | 🔵 Tech debt | — | **Backlog** |
 | R19 | Redis Pub/Sub cho WebSocket | 🔵 Tech debt | Chỉ cần khi scale nhiều instance | **Backlog** |
 
@@ -195,8 +201,11 @@
 | R25 | Ẩn card uỷ quyền/chữ ký với role không duyệt | Bước 29, 2026-07-17 |
 | R26 | Stat card dashboard click được | Bước 29, 2026-07-17 |
 | R27 | Toast nói rõ hành động | Bước 29, 2026-07-17 |
+| R14 | Schema `formData` theo loại văn bản | Giai đoạn 5 mục 5.1, 2026-07-18 |
+| R20 | Guard sửa Workflow khi có doc PENDING | Giai đoạn 5 mục 5.6, 2026-07-18 |
+| R28 | `seed.ts` ghi đè dữ liệu thật khi chạy lại | Bước 36, 2026-07-18 — sự cố có thật, xem chi tiết ở mục |
 
-> ⚠️ Mọi fix trừ R08 đều **chưa commit** (HEAD vẫn `82682f5` — Bước 8); repo chưa có remote GitHub. Commit là việc tồn đọng ưu tiên cao nhất hiện tại.
+> ⚠️ Repo đã có remote GitHub và đã push tới Bước 31 (`ea039e9`). Các fix từ Bước 32 trở đi (kể cả toàn bộ Giai đoạn 5) **chưa commit** — commit là việc tồn đọng ưu tiên cao nhất hiện tại.
 
 ---
 

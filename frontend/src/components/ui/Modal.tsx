@@ -20,6 +20,14 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const titleId = useRef(`modal-title-${Math.random().toString(36).slice(2, 9)}`).current;
 
+  // Giữ onClose trong ref để effect focus-trap bên dưới KHÔNG phụ thuộc identity của nó.
+  // Caller thường truyền inline arrow (mới sau mỗi render) — nếu để onClose trong deps,
+  // mỗi ký tự gõ vào input trong modal (state ở trang cha → re-render) làm effect chạy lại:
+  // cleanup trả focus ra nút mở modal bên ngoài, rồi effect kéo focus về nút X — chính là
+  // bug "đang gõ thì nhảy sang nút đóng" ở trang Phòng ban.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   // Nhớ phần tử đang focus trước khi mở, để trả lại khi đóng. Phải đọc trong lúc render
   // (không phải trong effect) vì React áp dụng autoFocus của con (vd. Textarea) ngay khi
   // commit — nếu đọc trong useEffect thì đã quá trễ, activeElement lúc đó đã là chính modal.
@@ -39,7 +47,7 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
 
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -68,7 +76,8 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
       document.removeEventListener("keydown", onKey);
       previouslyFocusedRef.current?.focus?.();
     };
-  }, [open, onClose]);
+    // Chỉ phụ thuộc open — cleanup (trả focus về chỗ cũ) chỉ chạy đúng lúc modal đóng.
+  }, [open]);
 
   if (!open) return null;
 

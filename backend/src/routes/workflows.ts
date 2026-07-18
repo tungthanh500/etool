@@ -10,12 +10,28 @@ import { audit } from "../lib/audit";
 const router = Router();
 
 const WORKFLOW_INCLUDE = {
-  steps: { orderBy: { stepOrder: "asc" as const } },
+  steps: {
+    orderBy: { stepOrder: "asc" as const },
+    include: {
+      department: { select: { id: true, name: true } },
+      approverUser: { select: { id: true, fullName: true } },
+    },
+  },
 };
 
-const stepsSchema = z
-  .array(z.string().trim().min(1))
-  .min(1, "Cần ít nhất 1 bước duyệt");
+// Mô hình bước duyệt (mục 5.6): CREATOR_DEPT_HEAD không cần thêm dữ liệu (phòng ban xác
+// định động theo từng văn bản); DEPARTMENT bắt buộc chọn phòng ban, user đích danh tuỳ chọn.
+const stepInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("CREATOR_DEPT_HEAD") }),
+  z.object({
+    kind: z.literal("DEPARTMENT"),
+    departmentId: z.string().min(1, "Thiếu phòng ban"),
+    approverUserId: z.string().min(1).optional(),
+  }),
+]);
+type StepInput = z.infer<typeof stepInputSchema>;
+
+const stepsSchema = z.array(stepInputSchema).min(1, "Cần ít nhất 1 bước duyệt");
 
 const createWorkflowSchema = z.object({
   name: z.string().trim().min(1, "Thiếu tên loại văn bản"),
@@ -28,16 +44,43 @@ const updateWorkflowSchema = z.object({
   steps: stepsSchema.optional(),
 });
 
-// Xác nhận mọi tên vai trò trong `steps` khớp Role có thật trong DB —
-// tránh tạo bước duyệt trỏ tới vai trò không tồn tại, không ai duyệt được.
-async function assertRolesExist(steps: string[]): Promise<void> {
-  const uniqueNames = [...new Set(steps)];
-  const found = await prisma.role.findMany({ where: { name: { in: uniqueNames } } });
-  if (found.length !== uniqueNames.length) {
-    const foundNames = new Set(found.map((r) => r.name));
-    const missing = uniqueNames.filter((n) => !foundNames.has(n));
-    throw new AppError(400, `Vai trò không tồn tại: ${missing.join(", ")}`);
+// Xác nhận: mọi departmentId trong bước DEPARTMENT phải tồn tại; approverUserId (nếu có)
+// phải tồn tại VÀ thuộc ĐÚNG phòng ban đã chọn cho bước đó — chỉ định "Trưởng phòng A"
+// vào bước gắn phòng ban B là cấu hình sai, chặn ngay từ lúc lưu thay vì lỗi ngầm lúc duyệt.
+async function assertStepsValid(steps: StepInput[]): Promise<void> {
+  const deptSteps = steps.filter((s): s is Extract<StepInput, { kind: "DEPARTMENT" }> => s.kind === "DEPARTMENT");
+  if (deptSteps.length === 0) return;
+
+  const deptIds = [...new Set(deptSteps.map((s) => s.departmentId))];
+  const depts = await prisma.department.findMany({ where: { id: { in: deptIds } } });
+  if (depts.length !== deptIds.length) {
+    throw new AppError(400, "Phòng ban không tồn tại");
   }
+
+  const userIds = [...new Set(deptSteps.map((s) => s.approverUserId).filter((v): v is string => Boolean(v)))];
+  if (userIds.length === 0) return;
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, departmentId: true },
+  });
+  if (users.length !== userIds.length) {
+    throw new AppError(400, "Người duyệt chỉ định không tồn tại");
+  }
+  const userDept = new Map(users.map((u) => [u.id, u.departmentId]));
+  for (const s of deptSteps) {
+    if (s.approverUserId && userDept.get(s.approverUserId) !== s.departmentId) {
+      throw new AppError(400, "Người duyệt chỉ định phải thuộc đúng phòng ban đã chọn cho bước đó");
+    }
+  }
+}
+
+function stepCreateData(steps: StepInput[]) {
+  return steps.map((s, i) => ({
+    stepOrder: i + 1,
+    kind: s.kind,
+    departmentId: s.kind === "DEPARTMENT" ? s.departmentId : null,
+    approverUserId: s.kind === "DEPARTMENT" ? (s.approverUserId ?? null) : null,
+  }));
 }
 
 router.get("/", authenticate, async (_req, res, next) => {
@@ -76,15 +119,13 @@ router.post("/", authenticate, authorize("workflow:manage"), async (req, res, ne
     const existing = await prisma.workflow.findFirst({ where: { name } });
     if (existing) throw new AppError(409, "Tên loại văn bản đã tồn tại");
 
-    await assertRolesExist(steps);
+    await assertStepsValid(steps);
 
     const workflow = await prisma.workflow.create({
       data: {
         name,
         description,
-        steps: {
-          create: steps.map((approverRole, i) => ({ stepOrder: i + 1, approverRole })),
-        },
+        steps: { create: stepCreateData(steps) },
       },
       include: WORKFLOW_INCLUDE,
     });
@@ -106,7 +147,18 @@ router.patch("/:id", authenticate, authorize("workflow:manage"), async (req, res
     const existing = await prisma.workflow.findUnique({ where: { id: req.params.id } });
     if (!existing) throw new AppError(404, "Không tìm thấy luồng duyệt");
 
-    if (steps) await assertRolesExist(steps);
+    if (steps) {
+      // R20: sửa các bước khi đang có văn bản chờ duyệt dùng luồng này rất dễ khiến
+      // currentStep của hồ sơ đang dở trỏ vào 1 bước đã đổi ý nghĩa/không còn tồn tại
+      // giữa chừng — chặn hẳn, chỉ cho sửa mô tả trong lúc đó.
+      const pendingCount = await prisma.document.count({
+        where: { workflowId: req.params.id, status: "PENDING" },
+      });
+      if (pendingCount > 0) {
+        throw new AppError(409, "Không thể sửa các bước: đang có văn bản chờ duyệt dùng luồng này");
+      }
+      await assertStepsValid(steps);
+    }
 
     await prisma.$transaction(async (tx) => {
       if (description !== undefined) {
@@ -115,11 +167,7 @@ router.patch("/:id", authenticate, authorize("workflow:manage"), async (req, res
       if (steps) {
         await tx.workflowStep.deleteMany({ where: { workflowId: req.params.id } });
         await tx.workflowStep.createMany({
-          data: steps.map((approverRole, i) => ({
-            workflowId: req.params.id,
-            stepOrder: i + 1,
-            approverRole,
-          })),
+          data: stepCreateData(steps).map((s) => ({ ...s, workflowId: req.params.id })),
         });
       }
     });

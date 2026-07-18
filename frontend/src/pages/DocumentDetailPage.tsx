@@ -10,7 +10,6 @@ import {
   Download,
   Paperclip,
   Send,
-  UploadCloud,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -25,23 +24,26 @@ import {
   Card,
   ConfirmDialog,
   Field,
-  Input,
   PageHeader,
   PageLoading,
   PromptDialog,
   Textarea,
   useToast,
 } from "../components/ui";
+import { AttachmentPicker } from "../components/documentForms/AttachmentPicker";
+import { DocumentFormFields } from "../components/documentForms/DocumentFormFields";
+import { DocumentFormSummary, hasFormSummaryContent } from "../components/documentForms/DocumentFormSummary";
 import {
   statusLabel,
   typeLabel,
   actionLabel,
-  roleLabel,
+  stepLabel,
   STATUS_TONES,
   ACTION_TONES,
   EVENT_LABELS,
   EVENT_TONES,
 } from "../lib/labels";
+import { defaultFormValue, filePolicyFor, hasAutoTitle, serializeFormDataForSubmit } from "../lib/documentFormMeta";
 import { formatDateTime } from "../lib/formatDate";
 import type { DocumentDetail } from "../types";
 
@@ -68,14 +70,13 @@ export function DocumentDetailPage() {
   const approvedFileInputRef = useRef<HTMLInputElement>(null);
   const { lastEvent } = useWebSocket(true);
 
-  // Chỉnh sửa nội dung khi bị yêu cầu chỉnh sửa (mục 2.1)
+  // Chỉnh sửa nội dung khi bị yêu cầu chỉnh sửa (mục 2.1) — dùng chung form theo loại (5.1)
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
-  const [editFormData, setEditFormData] = useState("{}");
+  const [editFormData, setEditFormData] = useState<unknown>({});
   const [editRemoveIds, setEditRemoveIds] = useState<Set<string>>(new Set());
   const [editNewFiles, setEditNewFiles] = useState<File[]>([]);
   const [editError, setEditError] = useState<string | null>(null);
-  const editFileInputRef = useRef<HTMLInputElement>(null);
 
   // Thu hồi văn bản (mục 2.2)
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
@@ -190,7 +191,7 @@ export function DocumentDetailPage() {
   function startEditing() {
     if (!doc) return;
     setEditTitle(doc.title);
-    setEditFormData(JSON.stringify(doc.formData ?? {}, null, 2));
+    setEditFormData(doc.formData ?? defaultFormValue(doc.type));
     setEditRemoveIds(new Set());
     setEditNewFiles([]);
     setEditError(null);
@@ -207,19 +208,26 @@ export function DocumentDetailPage() {
   }
 
   async function saveEdit() {
-    if (!id) return;
+    if (!id || !doc) return;
     setEditError(null);
-    try {
-      JSON.parse(editFormData);
-    } catch {
-      setEditError("Dữ liệu form phải là JSON hợp lệ");
+
+    const policy = filePolicyFor(doc.type);
+    const remainingFiles =
+      originalAttachments.filter((a) => !editRemoveIds.has(a.id)).length + editNewFiles.length;
+    if (policy === "required" && remainingFiles === 0) {
+      setEditError("Cần đính kèm ít nhất 1 file");
       return;
     }
+    if (!hasAutoTitle(doc.type) && !editTitle.trim()) {
+      setEditError("Thiếu tiêu đề");
+      return;
+    }
+
     setBusy(true);
     try {
       const body = new FormData();
-      body.append("title", editTitle);
-      body.append("formData", editFormData);
+      if (!hasAutoTitle(doc.type)) body.append("title", editTitle);
+      body.append("formData", JSON.stringify(serializeFormDataForSubmit(doc.type, editFormData)));
       body.append("removeAttachmentIds", JSON.stringify([...editRemoveIds]));
       editNewFiles.forEach((f) => body.append("attachments", f));
       await apiPatchForm(`/api/documents/${id}`, body);
@@ -243,12 +251,6 @@ export function DocumentDetailPage() {
     );
   }
   if (!doc) return null;
-
-  // Dữ liệu form đặc thù (R22): hiển thị cho người duyệt thay vì chôn trong JSON.
-  const formDataEntries =
-    doc.formData && typeof doc.formData === "object" && !Array.isArray(doc.formData)
-      ? Object.entries(doc.formData as Record<string, unknown>)
-      : [];
 
   const canResubmit = doc.status === "CHANGES_REQUESTED" && doc.creatorId === user?.id;
   const canEdit = canResubmit;
@@ -319,36 +321,17 @@ export function DocumentDetailPage() {
                 <span className="stepper__marker">
                   {done ? <Check size={15} /> : s.stepOrder}
                 </span>
-                <span className="stepper__label">{roleLabel(s.approverRole)}</span>
+                <span className="stepper__label">{stepLabel(s)}</span>
               </div>
             );
           })}
         </div>
       </Card>
 
-      {/* Dữ liệu form đặc thù (R22) — người duyệt cần thấy để ra quyết định */}
-      {formDataEntries.length > 0 && (
+      {/* Dữ liệu form đặc thù (R22 + renderer theo loại, mục 5.1) — người duyệt cần thấy để ra quyết định */}
+      {hasFormSummaryContent(doc.type, doc.formData) && (
         <Card title="Dữ liệu form" className="section-gap">
-          <div className="table-wrap">
-            <table className="table">
-              <tbody>
-                {formDataEntries.map(([key, value]) => (
-                  <tr key={key}>
-                    <th scope="row" style={{ width: "35%", textAlign: "left" }}>
-                      {key}
-                    </th>
-                    <td>
-                      {typeof value === "object" && value !== null
-                        ? JSON.stringify(value)
-                        : typeof value === "number"
-                          ? value.toLocaleString("vi-VN")
-                          : String(value)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DocumentFormSummary type={doc.type} formData={doc.formData} />
         </Card>
       )}
 
@@ -396,20 +379,17 @@ export function DocumentDetailPage() {
         </Card>
       )}
 
-      {/* Chỉnh sửa nội dung khi bị yêu cầu chỉnh sửa (mục 2.1) */}
+      {/* Chỉnh sửa nội dung khi bị yêu cầu chỉnh sửa (mục 2.1) — dùng chung form theo loại (5.1) */}
       {canEdit && editing && (
         <Card title="Chỉnh sửa văn bản" className="section-gap">
           <div className="form-stack">
-            <Field label="Tiêu đề">
-              <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
-            </Field>
-
-            <Field
-              label="Dữ liệu form (JSON — nâng cao)"
-              hint="Thông tin đặc thù của đơn dưới dạng JSON."
-            >
-              <Textarea rows={5} mono value={editFormData} onChange={(e) => setEditFormData(e.target.value)} />
-            </Field>
+            <DocumentFormFields
+              type={doc.type}
+              title={editTitle}
+              onTitleChange={setEditTitle}
+              formData={editFormData}
+              onFormDataChange={setEditFormData}
+            />
 
             {originalAttachments.length > 0 && (
               <Field label="File hiện có" hint="Đánh dấu để xoá file khỏi văn bản">
@@ -449,52 +429,16 @@ export function DocumentDetailPage() {
               </Field>
             )}
 
-            <Field label="Thêm file mới" hint="Chấp nhận .pdf, .docx · tối đa 15MB mỗi file">
-              <div
-                className="dropzone"
-                onClick={() => editFileInputRef.current?.click()}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (e.dataTransfer.files) setEditNewFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
-                }}
-              >
-                <UploadCloud size={26} />
-                <div>Kéo thả file vào đây hoặc bấm để chọn</div>
-                <div className="dropzone__hint">.pdf, .docx</div>
-                <input
-                  ref={editFileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.docx"
-                  hidden
-                  onChange={(e) => {
-                    if (e.target.files) setEditNewFiles((prev) => [...prev, ...Array.from(e.target.files!)]);
-                    e.target.value = "";
-                  }}
-                />
-              </div>
-              {editNewFiles.length > 0 && (
-                <div className="file-list" style={{ marginTop: "var(--sp-3)" }}>
-                  {editNewFiles.map((f, i) => (
-                    <div key={i} className="file-chip">
-                      <span className="file-chip__icon">
-                        <FileText size={18} />
-                      </span>
-                      <span className="file-chip__name">{f.name}</span>
-                      <button
-                        type="button"
-                        className="icon-btn file-chip__actions"
-                        onClick={() => setEditNewFiles((prev) => prev.filter((_, idx) => idx !== i))}
-                        aria-label="Bỏ file"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Field>
+            {filePolicyFor(doc.type) !== "hidden" && (
+              <AttachmentPicker
+                files={editNewFiles}
+                onChange={setEditNewFiles}
+                required={
+                  filePolicyFor(doc.type) === "required" &&
+                  originalAttachments.filter((a) => !editRemoveIds.has(a.id)).length === 0
+                }
+              />
+            )}
 
             {editError && <Alert tone="danger">{editError}</Alert>}
 

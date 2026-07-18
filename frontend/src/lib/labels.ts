@@ -1,5 +1,6 @@
 // Nhãn hiển thị tiếng Việt dùng chung toàn UI — nguồn duy nhất, tránh lặp
 // STATUS_LABELS/ACTION_LABELS ở nhiều trang như trước.
+import type { WorkflowStep } from "../types";
 
 export type DocStatus =
   | "DRAFT"
@@ -43,8 +44,15 @@ export const STATUS_TONES: Record<string, Tone> = {
 
 export const TYPE_LABELS: Record<string, string> = {
   GENERAL: "Văn bản chung",
-  PURCHASE: "Mua sắm vật tư",
+  PURCHASE: "Đơn hàng",
   PAYMENT: "Đề xuất thanh toán",
+  LEAVE: "Đơn xin nghỉ phép",
+};
+
+export const LEAVE_TYPE_LABELS: Record<string, string> = {
+  ANNUAL: "Nghỉ phép năm",
+  UNPAID: "Nghỉ không lương",
+  STATE_POLICY: "Nghỉ theo chính sách nhà nước",
 };
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -55,6 +63,8 @@ export const ACTION_LABELS: Record<string, string> = {
   EDIT: "Chỉnh sửa nội dung",
   WITHDRAW: "Thu hồi",
   COMMENT: "Bình luận",
+  // Mục 5.6B: bước tự động bị bỏ qua (không ai đảm nhiệm / người duyệt duy nhất là người tạo).
+  STEP_SKIPPED: "Bỏ qua bước",
 };
 
 export const ACTION_TONES: Record<string, Tone> = {
@@ -65,6 +75,7 @@ export const ACTION_TONES: Record<string, Tone> = {
   EDIT: "orange",
   WITHDRAW: "neutral",
   COMMENT: "neutral",
+  STEP_SKIPPED: "neutral",
 };
 
 // Nhãn vai trò (role) tiếng Việt — dùng cho stepper duyệt & badge.
@@ -84,6 +95,14 @@ export const ROLE_TONES: Record<string, Tone> = {
 
 export function roleLabel(r: string): string {
   return ROLE_LABELS[r] ?? r;
+}
+
+// Nhãn 1 bước duyệt theo mô hình mới (mục 5.6) — dùng cho stepper trang chi tiết
+// và danh sách bước trong Workflow Builder.
+export function stepLabel(step: WorkflowStep): string {
+  if (step.kind === "CREATOR_DEPT_HEAD") return "Trưởng phòng (phòng người nộp)";
+  if (step.approverUser) return `${step.department?.name ?? "?"} — ${step.approverUser.fullName}`;
+  return `${step.department?.name ?? "?"} — bất kỳ thành viên`;
 }
 
 // Nhãn sự kiện realtime (WebSocket / toast).

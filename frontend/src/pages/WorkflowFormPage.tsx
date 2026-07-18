@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DragEvent, FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
   Building2,
-  Check,
   FlagTriangleRight,
   GripVertical,
   Plus,
   Trash2,
+  UserCheck,
   UserPlus,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "../api/client";
@@ -25,16 +25,14 @@ import {
   Select,
   Textarea,
 } from "../components/ui";
-import { roleLabel } from "../lib/labels";
-import type { Role, Workflow } from "../types";
+import type { Department, User, Workflow, WorkflowStepKind } from "../types";
 
-// Chú thích phạm vi của một bước — phản ánh đúng logic backend hiện có
-// (chỉ Dept_Head bị ràng buộc duyệt trong cùng phòng ban người nộp).
-function scopeHint(approverRole: string): { icon: typeof Check; text: string } {
-  if (approverRole === "Dept_Head") {
-    return { icon: Building2, text: "Cùng phòng ban người nộp" };
-  }
-  return { icon: Check, text: "Bất kỳ ai giữ vai trò này" };
+// State soạn thảo 1 bước trên form — gọn hơn payload API (departmentId/approverUserId
+// rỗng khi không áp dụng), map 2 chiều sang WorkflowStep lúc load và payload lúc submit.
+interface StepFormState {
+  kind: WorkflowStepKind;
+  departmentId: string;
+  approverUserId: string; // "" = bất kỳ thành viên nào của phòng ban
 }
 
 interface DropTarget {
@@ -42,15 +40,18 @@ interface DropTarget {
   position: "before" | "after";
 }
 
+const EMPTY_STEP: StepFormState = { kind: "CREATOR_DEPT_HEAD", departmentId: "", approverUserId: "" };
+
 export function WorkflowFormPage() {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
 
-  const [roles, setRoles] = useState<Role[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [steps, setSteps] = useState<string[]>([]);
+  const [steps, setSteps] = useState<StepFormState[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -62,24 +63,47 @@ export function WorkflowFormPage() {
 
   useEffect(() => {
     Promise.all([
-      apiGet<Role[]>("/api/roles"),
+      apiGet<Department[]>("/api/departments"),
+      // Chỉ Admin vào được trang này (workflow:manage đi cùng user:manage ở role hiện tại) —
+      // tái dùng /api/users có sẵn cho ô chọn "đích danh 1 người" thay vì thêm endpoint riêng.
+      apiGet<User[]>("/api/users"),
       isEdit ? apiGet<Workflow>(`/api/workflows/${id}`) : Promise.resolve(null),
     ])
-      .then(([rolesList, wf]) => {
-        setRoles(rolesList);
+      .then(([deptList, userList, wf]) => {
+        setDepartments(deptList);
+        setUsers(userList);
         if (wf) {
           setName(wf.name);
           setDescription(wf.description ?? "");
-          setSteps([...wf.steps].sort((a, b) => a.stepOrder - b.stepOrder).map((s) => s.approverRole));
-        } else if (rolesList.length > 0) {
-          setSteps([rolesList[0].name]);
+          setSteps(
+            [...wf.steps]
+              .sort((a, b) => a.stepOrder - b.stepOrder)
+              .map((s) => ({
+                kind: s.kind,
+                departmentId: s.departmentId ?? "",
+                approverUserId: s.approverUserId ?? "",
+              })),
+          );
+        } else {
+          setSteps([{ ...EMPTY_STEP }]);
         }
       })
       .finally(() => setLoading(false));
   }, [id, isEdit]);
 
+  const usersByDept = useMemo(() => {
+    const map = new Map<string, User[]>();
+    for (const u of users) {
+      if (!u.isActive) continue;
+      const list = map.get(u.departmentId) ?? [];
+      list.push(u);
+      map.set(u.departmentId, list);
+    }
+    return map;
+  }, [users]);
+
   function addStep() {
-    setSteps((prev) => [...prev, roles[0]?.name ?? ""]);
+    setSteps((prev) => [...prev, { ...EMPTY_STEP, departmentId: departments[0]?.id ?? "" }]);
   }
   function removeStep(idx: number) {
     setSteps((prev) => prev.filter((_, i) => i !== idx));
@@ -93,8 +117,15 @@ export function WorkflowFormPage() {
       return next;
     });
   }
-  function setStepRole(idx: number, roleName: string) {
-    setSteps((prev) => prev.map((s, i) => (i === idx ? roleName : s)));
+  function updateStep(idx: number, patch: Partial<StepFormState>) {
+    setSteps((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  }
+  function setStepKind(idx: number, kind: WorkflowStepKind) {
+    updateStep(idx, {
+      kind,
+      departmentId: kind === "DEPARTMENT" ? (departments[0]?.id ?? "") : "",
+      approverUserId: "",
+    });
   }
 
   // Kéo-thả đổi thứ tự bước. Nút mũi tên lên/xuống vẫn giữ cho bàn phím.
@@ -130,12 +161,25 @@ export function WorkflowFormPage() {
       setError("Cần ít nhất 1 bước duyệt");
       return;
     }
+    if (steps.some((s) => s.kind === "DEPARTMENT" && !s.departmentId)) {
+      setError("Mỗi bước \"Phòng ban chỉ định\" phải chọn phòng ban");
+      return;
+    }
+    const payloadSteps = steps.map((s) =>
+      s.kind === "CREATOR_DEPT_HEAD"
+        ? { kind: "CREATOR_DEPT_HEAD" as const }
+        : {
+            kind: "DEPARTMENT" as const,
+            departmentId: s.departmentId,
+            ...(s.approverUserId ? { approverUserId: s.approverUserId } : {}),
+          },
+    );
     setSubmitting(true);
     try {
       if (isEdit) {
-        await apiPatch(`/api/workflows/${id}`, { description, steps });
+        await apiPatch(`/api/workflows/${id}`, { description, steps: payloadSteps });
       } else {
-        await apiPost("/api/workflows", { name, description, steps });
+        await apiPost("/api/workflows", { name, description, steps: payloadSteps });
       }
       navigate("/workflows");
     } catch (err) {
@@ -156,6 +200,14 @@ export function WorkflowFormPage() {
     } finally {
       setDeleting(false);
     }
+  }
+
+  function previewLabel(s: StepFormState): string {
+    if (s.kind === "CREATOR_DEPT_HEAD") return "Trưởng phòng (phòng người nộp)";
+    const deptName = departments.find((d) => d.id === s.departmentId)?.name ?? "— chưa chọn phòng ban —";
+    if (!s.approverUserId) return `${deptName} — bất kỳ thành viên`;
+    const userName = users.find((u) => u.id === s.approverUserId)?.fullName ?? "?";
+    return `${deptName} — ${userName}`;
   }
 
   if (loading) return <PageLoading />;
@@ -200,14 +252,13 @@ export function WorkflowFormPage() {
           <Field label="Các bước duyệt (kéo thả để đổi thứ tự)">
             <div className="flow-steps">
               {steps.map((s, i) => {
-                const hint = scopeHint(s);
-                const HintIcon = hint.icon;
                 const dropCls =
                   dropTarget?.index === i
                     ? dropTarget.position === "before"
                       ? "is-drop-before"
                       : "is-drop-after"
                     : "";
+                const candidateUsers = s.departmentId ? (usersByDept.get(s.departmentId) ?? []) : [];
                 return (
                   <div
                     key={i}
@@ -229,17 +280,41 @@ export function WorkflowFormPage() {
                     </span>
                     <span className="flow-step__num">{i + 1}</span>
                     <div className="flow-step__body">
-                      <Select value={s} onChange={(e) => setStepRole(i, e.target.value)}>
-                        {roles.map((r) => (
-                          <option key={r.id} value={r.name}>
-                            {roleLabel(r.name)}
-                          </option>
-                        ))}
+                      <Select value={s.kind} onChange={(e) => setStepKind(i, e.target.value as WorkflowStepKind)}>
+                        <option value="CREATOR_DEPT_HEAD">Trưởng phòng của người nộp</option>
+                        <option value="DEPARTMENT">Phòng ban chỉ định</option>
                       </Select>
-                      <div className="flow-step__hint">
-                        <HintIcon size={13} />
-                        {hint.text}
-                      </div>
+
+                      {s.kind === "CREATOR_DEPT_HEAD" ? (
+                        <div className="flow-step__hint">
+                          <Building2 size={13} />
+                          Người duyệt là Trưởng phòng cùng phòng ban với người nộp
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", gap: "var(--sp-2)", marginTop: "var(--sp-2)" }}>
+                          <Select
+                            value={s.departmentId}
+                            onChange={(e) => updateStep(i, { departmentId: e.target.value, approverUserId: "" })}
+                          >
+                            {departments.map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.name}
+                              </option>
+                            ))}
+                          </Select>
+                          <Select
+                            value={s.approverUserId}
+                            onChange={(e) => updateStep(i, { approverUserId: e.target.value })}
+                          >
+                            <option value="">— Bất kỳ thành viên nào —</option>
+                            {candidateUsers.map((u) => (
+                              <option key={u.id} value={u.id}>
+                                {u.fullName}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                      )}
                     </div>
                     <div className="flow-step__actions">
                       <Button
@@ -285,7 +360,6 @@ export function WorkflowFormPage() {
               size="sm"
               leftIcon={<Plus size={15} />}
               onClick={addStep}
-              disabled={roles.length === 0}
               style={{ marginTop: "var(--sp-2)" }}
             >
               Thêm bước
@@ -307,8 +381,10 @@ export function WorkflowFormPage() {
                   <div key={i} style={{ display: "contents" }}>
                     <div className="flow-preview__connector" />
                     <div className="flow-preview__node">
-                      <span className="flow-preview__marker">{i + 1}</span>
-                      <span className="flow-preview__label">{roleLabel(s)}</span>
+                      <span className="flow-preview__marker">
+                        {s.kind === "CREATOR_DEPT_HEAD" ? <Building2 size={13} /> : <UserCheck size={13} />}
+                      </span>
+                      <span className="flow-preview__label">{previewLabel(s)}</span>
                     </div>
                   </div>
                 ))}

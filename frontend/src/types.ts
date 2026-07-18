@@ -62,11 +62,20 @@ export interface AuditLogPage {
   limit: number;
 }
 
+// Mô hình bước duyệt (mục 5.6): CREATOR_DEPT_HEAD = Trưởng phòng cùng phòng ban người
+// nộp; DEPARTMENT = phòng ban chỉ định, approverUser có giá trị -> chỉ đích danh người
+// đó, null -> bất kỳ thành viên phòng ban.
+export type WorkflowStepKind = "CREATOR_DEPT_HEAD" | "DEPARTMENT";
+
 export interface WorkflowStep {
   id: string;
   workflowId: string;
   stepOrder: number;
-  approverRole: string;
+  kind: WorkflowStepKind;
+  departmentId: string | null;
+  department: { id: string; name: string } | null;
+  approverUserId: string | null;
+  approverUser: { id: string; fullName: string } | null;
 }
 
 export interface Workflow {

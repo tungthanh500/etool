@@ -150,6 +150,57 @@
 
 ---
 
+## Giai đoạn 5 — Form động theo loại văn bản (đóng R14) + tinh chỉnh giao diện
+
+> Nguồn gốc: đề xuất của người dùng 2026-07-18. Đã chốt qua hỏi đáp: (1) số ngày nghỉ **trừ cả T7 và CN** (công ty làm T2–T6); (2) luồng duyệt nghỉ phép **Trưởng phòng → HR** (cần role Nhân sự mới; flow sửa được sau qua Workflow Builder); (3) hoá đơn **giữ PDF/DOCX**, không nhận ảnh; (4) **giữ** "Văn bản chung" nhưng thêm ô tóm tắt/ghi chú.
+>
+> Bổ sung 2026-07-18 (sau thảo luận "người tạo chức danh cao hơn người duyệt"): (5) áp dụng **quy tắc tự động bỏ qua bước** khi bước không có người duyệt hợp lệ hoặc người duyệt duy nhất là chính người tạo; (6) **mô hình bước duyệt mới** — bước kiểu "Trưởng phòng cùng phòng ban người nộp" giữ như hiện hữu; các bước còn lại cấu hình bằng **Phòng ban + user tuỳ chọn**: chọn đích danh user thì CHỈ người đó duyệt được, **bỏ trống user thì BẤT KỲ thành viên nào của phòng ban đó** đều duyệt được — chi tiết mục 5.6. Hệ quả: KHÔNG cần role HR mới (quyền duyệt đến từ vị trí trong flow, không từ role) — 5.1 điều chỉnh tương ứng.
+
+### [x] 5.1 — Nền tảng: chọn loại trước, form theo loại + Phòng Nhân sự — HOÀN THÀNH 2026-07-18
+- **Seed:** phòng ban "Phòng Nhân sự" + user mẫu `hr` (role Nhân viên), workflow `LEAVE` (Trưởng phòng của người nộp → Phòng Nhân sự-bất kỳ thành viên).
+- **Frontend `CreateDocumentPage` 2 bước:** bước 1 chọn loại (4 card icon + mô tả), bước 2 form riêng theo loại. Bỏ hẳn ô JSON nâng cao. 4 component (`components/documentForms/`) tái dùng cho cả panel chỉnh sửa.
+- **Backend `lib/documentForms.ts`:** zod schema theo type, validate POST+PATCH, trường dẫn xuất server tự tính lại.
+- **Trang chi tiết:** `DocumentFormSummary` renderer theo loại, fallback key-value cho loại tuỳ biến.
+- Nhãn: thêm `LEAVE`, đổi `PURCHASE` → "Đơn hàng".
+- **Phạm vi thực tế mở rộng hơn dự kiến:** làm luôn cả PAYMENT (bảng chi phí động) và PURCHASE+GENERAL trong cùng đợt vì đơn giản — xem 5.3/5.4 bên dưới đã gộp vào đây. Chi tiết + kết quả kiểm thử: Bước 36, `IMPLEMENTATION_PLAN.md`.
+
+### [x] 5.2 — Đơn xin nghỉ phép (LEAVE): PDF tự sinh + đóng dấu khi duyệt — HOÀN THÀNH 2026-07-18
+- Form + tính số ngày (trừ T7+CN, 0.5 khi trùng ngày, tiêu đề tự sinh) **đã xong ở 5.1**, kiểm thử qua UI thật PASS (ví dụ thật: T6→T2 = 1 ngày, khớp đúng ví dụ đã chốt với người dùng).
+- **CÒN LẠI — việc thật của 5.2:** PDF tự sinh khi nộp đơn (`lib/leavePdf.ts`, pdf-lib + font DejaVu sẵn có) — 1 trang A4, quốc hiệu tiêu ngữ, thông tin đơn, chữ ký người làm đơn, chừa sẵn khu "PHẦN PHÊ DUYỆT" cuối trang. Khi duyệt bước cuối: **regenerate PDF** điền chữ ký + dấu ĐÃ DUYỆT của từng người vào đúng khu đó (không sinh trang phụ lục như 2.5, khác với luồng GENERAL/PAYMENT/PURCHASE). Người duyệt cuối tự upload bản ký tay → bỏ qua auto-generate. `autoStampApprovedPdfs` rẽ nhánh theo type.
+
+### [x] 5.3 — Đề nghị thanh toán (PAYMENT) — HOÀN THÀNH 2026-07-18 (làm gộp trong 5.1, xem trên + Bước 36)
+- Bảng chi phí động (tự sinh dòng khi gõ dòng cuối, nút xoá dòng), tổng tự tính (client hiển thị realtime + server tính lại độc lập, đối chiếu khớp qua kiểm thử thật). Tiêu đề tự sinh "Đề nghị thanh toán — <tên dự án>".
+
+### [x] 5.4 — Đơn hàng (PURCHASE) + Văn bản chung (GENERAL) — HOÀN THÀNH 2026-07-18 (làm gộp trong 5.1, xem trên + Bước 36)
+- PURCHASE: Tiêu đề + Ghi chú tuỳ chọn + file **bắt buộc ≥1** (validate cả client lẫn server, cả lúc tạo lẫn lúc sửa). GENERAL: Tiêu đề + Tóm tắt/ghi chú + file tuỳ chọn.
+
+### [ ] 5.5 — Tinh chỉnh giao diện chung (làm đầu tiên — nhỏ, độc lập)
+- Theme mặc định **SÁNG**: đổi default `"system"` → `"light"` trong `theme.tsx` (người dùng vẫn toggle được, lựa chọn cá nhân lưu localStorage được tôn trọng).
+- Topbar góc phải: **bỏ dòng chức danh** dưới tên ở nút user menu — chỉ còn "Nguyễn Văn A". (Trong dropdown vẫn giữ email + vai trò · phòng ban.)
+
+### [x] 5.6 — Mô hình bước duyệt mới (Phòng ban + user tuỳ chọn) + tự động bỏ qua bước + mở quyền tạo văn bản — HOÀN THÀNH 2026-07-18
+
+**A. Mô hình bước duyệt mới (đã chốt với người dùng):**
+- `WorkflowStep` đổi cấu trúc: `kind` (`CREATOR_DEPT_HEAD` | `DEPARTMENT`) + `departmentId?` + `approverUserId?`; **bỏ cột `approverRole`** sau khi chuyển đổi.
+  - `CREATOR_DEPT_HEAD` — "Trưởng phòng của người nộp": người duyệt là user role Trưởng phòng CÙNG phòng ban người tạo (giữ nguyên hành vi hiện hữu, thường là bước 1).
+  - `DEPARTMENT` — chọn phòng ban; `approverUserId` có giá trị → **CHỈ đích danh người đó** duyệt được; null → **BẤT KỲ thành viên active nào của phòng ban** đều duyệt được.
+- **Migration viết tay** (bảng đang có dữ liệu; DB hiện 0 document nên chỉ cần chuyển WorkflowStep): bước `Dept_Head` → `CREATOR_DEPT_HEAD`; bước role khác (Director/Accountant) → `DEPARTMENT` đích danh đúng user đang giữ role đó (mỗi role hiện đúng 1 người → GIỮ NGUYÊN hành vi thực tế; nếu chuyển thành "bất kỳ thành viên Ban Giám đốc" thì Admin cũng duyệt được — sai ngữ nghĩa cũ). Backup trước, soát SQL, `migrate deploy`.
+- `lib/workflow.ts` viết lại `matchesCurrentStep` theo kind (uỷ quyền vẫn tính theo NGƯỜI UỶ QUYỀN như 4.1); `notifications.ts getCurrentStepApproverIds` + lọc thô DB của `/pending`/dashboard viết lại theo mô hình mới (kind DEPARTMENT giờ diễn đạt được trong Prisma where; CREATOR_DEPT_HEAD vẫn hậu kiểm app layer).
+- **Workflow Builder UI:** mỗi bước chọn kiểu — "Trưởng phòng của người nộp" hoặc "Phòng ban chỉ định" (select phòng ban + select thành viên với mục đầu "— Bất kỳ thành viên nào —"). Hiển thị bước (builder, danh sách flow, stepper trang chi tiết): "Trưởng phòng (phòng người nộp)" / "Phòng Nhân sự — bất kỳ thành viên" / "Ban Giám đốc — Lê Văn Giám Đốc". Payload API đổi tương ứng, validate: DEPARTMENT phải có phòng ban tồn tại, user đích danh (nếu có) phải thuộc phòng ban đó.
+- **Tiện thể đóng R20:** PATCH flow có `steps` khi đang có văn bản PENDING dùng flow đó → 409 (vẫn cho sửa mô tả).
+- **Lưu ý hệ quả:** điều kiện ẩn card Uỷ quyền/Chữ ký (R25) đổi lại thành hiện cho MỌI user — vì với mô hình mới ai cũng có thể được chỉ định duyệt, không suy được từ permission nữa.
+
+**B. Quy tắc tự động bỏ qua bước (đã chốt):**
+- Helper "người duyệt hợp lệ của bước" (user active): CREATOR_DEPT_HEAD → Trưởng phòng cùng phòng người tạo; DEPARTMENT đích danh → chính user đó (nếu còn active); DEPARTMENT bất kỳ → mọi thành viên active của phòng.
+- **Bỏ qua bước** nếu danh sách rỗng HOẶC chỉ gồm đúng người tạo (chặn tự duyệt). Đánh giá lúc: tạo văn bản, sau mỗi lần duyệt, và khi nộp lại. Mỗi bước bị bỏ qua ghi `DocumentLog` action mới `STEP_SKIPPED` (comment nêu lý do) — timeline minh bạch.
+- Tạo mới mà bỏ qua HẾT mọi bước → chặn 400 "Luồng duyệt không có người duyệt hợp lệ". Giữa chừng mà các bước còn lại đều bị bỏ qua → văn bản sang APPROVED (đã qua đủ người duyệt thực).
+
+**C. Mở quyền tạo văn bản cho mọi role** (Trưởng phòng/Giám đốc/Kế toán... cũng xin nghỉ phép được): thêm `document:create` + `document:read:own` vào các role còn thiếu trong seed. An toàn nhờ quy tắc B (không ai tự duyệt đơn mình).
+
+**Thứ tự đề xuất (cập nhật):** 5.5 → 5.1 → 5.6 → 5.2 → 5.3 → 5.4 (5.6 phải xong trước 5.2 vì flow LEAVE dùng mô hình bước mới). Mỗi mục xong DỪNG CHỜ PHÊ DUYỆT theo quy trình hiện hành.
+
+---
+
 ## Thứ tự & phụ thuộc (tóm tắt)
 
 ```

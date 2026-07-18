@@ -28,8 +28,11 @@ function applyTheme(theme: Theme) {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  // Mặc định SÁNG khi chưa có lựa chọn lưu trước đó (yêu cầu người dùng 2026-07-18) —
+  // không còn tự theo theme hệ điều hành nữa; người dùng vẫn toggle sáng/tối tự do,
+  // lựa chọn đó vẫn được nhớ qua localStorage như cũ.
   const [theme, setThemeState] = useState<Theme>(
-    () => (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "system",
+    () => (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "light",
   );
   const [systemDark, setSystemDark] = useState(systemPrefersDark);
 

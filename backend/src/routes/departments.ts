@@ -80,7 +80,9 @@ router.delete("/:id", async (req, res, next) => {
       return;
     }
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2003") {
-      next(new AppError(409, "Không thể xoá: vẫn còn user thuộc phòng ban này"));
+      // FK có thể là User HOẶC WorkflowStep (mục 5.6 — bước duyệt chỉ định phòng ban này)
+      // — không phân biệt được từ mã lỗi, dùng message chung thay vì đổ oan cho user.
+      next(new AppError(409, "Không thể xoá: vẫn còn user hoặc luồng duyệt đang dùng phòng ban này"));
       return;
     }
     next(err);

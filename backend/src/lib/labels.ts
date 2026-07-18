@@ -13,8 +13,9 @@ const STATUS_LABELS: Record<string, string> = {
 
 const TYPE_LABELS: Record<string, string> = {
   GENERAL: "Văn bản chung",
-  PURCHASE: "Mua sắm vật tư",
+  PURCHASE: "Đơn hàng",
   PAYMENT: "Đề xuất thanh toán",
+  LEAVE: "Đơn xin nghỉ phép",
 };
 
 export function statusLabelVN(status: string): string {

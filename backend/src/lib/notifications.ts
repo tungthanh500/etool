@@ -2,6 +2,7 @@ import type { Document, DocumentLog, WorkflowStep } from "@prisma/client";
 import { prisma } from "./prisma";
 import { notifyUsers } from "./ws";
 import { sendPushToUsers } from "./push";
+import { getStepApproverIds } from "./workflow";
 
 type NotifiableDocument = Document & {
   creator: { departmentId: string };
@@ -9,9 +10,9 @@ type NotifiableDocument = Document & {
   logs: DocumentLog[];
 };
 
-// userId các người duyệt ứng viên ở bước hiện tại của hồ sơ (đúng role, Dept_Head phải
-// cùng phòng ban người tạo), cộng cả người đang NHẬN uỷ quyền hiệu lực từ họ (mục 4.1) —
-// người duyệt thay cũng cần được báo, nếu không thông báo chỉ tới người đang vắng mặt.
+// userId các người duyệt ứng viên ở bước hiện tại của hồ sơ (mô hình vị trí trong luồng,
+// mục 5.6), cộng cả người đang NHẬN uỷ quyền hiệu lực từ họ (mục 4.1) — người duyệt thay
+// cũng cần được báo, nếu không thông báo chỉ tới người đang vắng mặt.
 export async function getCurrentStepApproverIds(
   document: Pick<NotifiableDocument, "status" | "currentStep" | "creator" | "workflow">,
 ): Promise<string[]> {
@@ -19,15 +20,7 @@ export async function getCurrentStepApproverIds(
   const step = document.workflow.steps.find((s) => s.stepOrder === document.currentStep);
   if (!step) return [];
 
-  const candidates = await prisma.user.findMany({
-    where: {
-      isActive: true,
-      role: { name: step.approverRole },
-      ...(step.approverRole === "Dept_Head" ? { departmentId: document.creator.departmentId } : {}),
-    },
-    select: { id: true },
-  });
-  const ids = candidates.map((c) => c.id);
+  const ids = await getStepApproverIds(step, document.creator.departmentId);
   if (ids.length === 0) return ids;
 
   const now = new Date();

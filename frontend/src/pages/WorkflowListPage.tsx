@@ -10,7 +10,7 @@ import {
   SkeletonRows,
   useToast,
 } from "../components/ui";
-import { roleLabel, typeLabel } from "../lib/labels";
+import { stepLabel, typeLabel } from "../lib/labels";
 import type { Workflow } from "../types";
 
 export function WorkflowListPage() {
@@ -108,7 +108,7 @@ export function WorkflowListPage() {
                   .map((s, i, arr) => (
                     <span key={s.id} className="flow-card-mini__step">
                       <span className="flow-card-mini__num">{i + 1}</span>
-                      {roleLabel(s.approverRole)}
+                      {stepLabel(s)}
                       {i < arr.length - 1 && (
                         <ChevronRight size={14} color="var(--text-muted)" style={{ marginLeft: "var(--sp-1)" }} />
                       )}

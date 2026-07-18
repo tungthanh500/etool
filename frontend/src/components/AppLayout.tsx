@@ -305,10 +305,8 @@ export function AppLayout() {
                 aria-expanded={menuOpen}
               >
                 <Avatar name={user?.fullName ?? "?"} size="sm" />
-                <span className="user-menu__meta">
-                  <span className="user-menu__name">{user?.fullName}</span>
-                  <span className="user-menu__role">{user ? roleLabel(user.role.name) : ""}</span>
-                </span>
+                {/* Chỉ tên ở topbar (bỏ chức danh theo yêu cầu 2026-07-18) — vai trò/phòng ban vẫn xem đủ trong dropdown khi mở */}
+                <span className="user-menu__name">{user?.fullName}</span>
                 <ChevronDown size={16} color="var(--text-muted)" />
               </button>
 
