@@ -24,6 +24,7 @@ import { currentYearVN, dayEndVN, dayStartVN, formatDateTimeVN } from "../lib/da
 import { statusLabelVN, typeLabelVN } from "../lib/labels";
 import { generateLeavePdfAttachment } from "../lib/documentPdf";
 import { DOCUMENT_INCLUDE, LOGS_INCLUDE, SAFE_CREATOR_SELECT } from "../lib/documentInclude";
+import { DOCUMENT_STATUSES } from "@etool/shared";
 import {
   approveDocument,
   commentOnDocument,
@@ -37,7 +38,7 @@ import {
 
 const router = Router();
 
-const VALID_STATUSES = new Set(["DRAFT", "PENDING", "APPROVED", "REJECTED", "CHANGES_REQUESTED", "WITHDRAWN"]);
+const VALID_STATUSES = new Set<string>(DOCUMENT_STATUSES);
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 

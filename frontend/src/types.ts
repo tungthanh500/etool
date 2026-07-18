@@ -1,3 +1,8 @@
+import type { DocumentStatus, WorkflowStepKind } from "@etool/shared";
+
+// Re-export contract dùng chung để phần frontend còn lại import từ "../types" như trước.
+export type { DocumentStatus, WorkflowStepKind } from "@etool/shared";
+
 export interface Role {
   id: string;
   name: string;
@@ -62,11 +67,6 @@ export interface AuditLogPage {
   limit: number;
 }
 
-// Mô hình bước duyệt (mục 5.6): CREATOR_DEPT_HEAD = Trưởng phòng cùng phòng ban người
-// nộp; DEPARTMENT = phòng ban chỉ định, approverUser có giá trị -> chỉ đích danh người
-// đó, null -> bất kỳ thành viên phòng ban.
-export type WorkflowStepKind = "CREATOR_DEPT_HEAD" | "DEPARTMENT";
-
 export interface WorkflowStep {
   id: string;
   workflowId: string;
@@ -101,7 +101,7 @@ export interface DocumentSummary {
   title: string;
   type: string;
   formData: unknown;
-  status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CHANGES_REQUESTED" | "WITHDRAWN";
+  status: DocumentStatus;
   creatorId: string;
   currentStep: number;
   workflowId: string;

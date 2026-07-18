@@ -20,7 +20,8 @@ export function hasAutoTitle(type: string): boolean {
   return AUTO_TITLE_TYPES.has(type);
 }
 
-export type LeaveType = "ANNUAL" | "UNPAID" | "STATE_POLICY";
+export type { LeaveType } from "@etool/shared";
+import type { LeaveType } from "@etool/shared";
 
 export interface PaymentItem {
   noiDung: string;

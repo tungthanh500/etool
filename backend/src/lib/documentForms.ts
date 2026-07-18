@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { AppError } from "./errors";
+import { LEAVE_TYPES } from "@etool/shared";
+
+// Re-export contract dùng chung để phần backend còn lại import từ đây như trước.
+export { LEAVE_TYPES } from "@etool/shared";
+export type { LeaveType } from "@etool/shared";
 
 // Mục 5.1: bỏ ô "Dữ liệu form (JSON — nâng cao)" — mỗi loại văn bản chuẩn (GENERAL/
 // PURCHASE/PAYMENT/LEAVE) có schema riêng, validate ở cả POST (tạo) và PATCH (sửa khi
@@ -26,9 +31,6 @@ const paymentFormSchema = z.object({
   tenDuAn: z.string().trim().min(1, "Thiếu tên dự án"),
   items: z.array(paymentItemSchema).min(1, "Cần ít nhất 1 dòng chi phí"),
 });
-
-export const LEAVE_TYPES = ["ANNUAL", "UNPAID", "STATE_POLICY"] as const;
-export type LeaveType = (typeof LEAVE_TYPES)[number];
 
 const leaveFormSchema = z.object({
   tuNgay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày bắt đầu nghỉ không hợp lệ"),
