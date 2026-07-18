@@ -960,3 +960,667 @@ Không có sai lệch kỹ thuật. Gặp lại đúng sự cố môi trường 
 
 ### Bước tiếp theo
 Bước 8 (Web Push — 6b) chưa bắt đầu, sẽ triển khai tiếp theo đúng lộ trình đã duyệt.
+
+---
+
+## Bước 11 — Giao diện quản trị Luồng duyệt (Workflow Builder)
+
+### Bối cảnh & mục tiêu
+`Workflow`/`WorkflowStep` đã có sẵn trong schema từ đầu dự án, nhưng chỉ được tạo qua `seed.ts` hardcode (3 flow `GENERAL`/`PURCHASE`/`PAYMENT`) — không có API hay giao diện nào để tự tạo/sửa. Người dùng yêu cầu: cho Director một trang quản trị để tự định nghĩa **loại văn bản nào cần đi qua những ai, theo thứ tự nào**, kể cả tạo hẳn loại văn bản mới (không chỉ sửa 3 loại có sẵn) — không cần deploy code. Đã chốt qua `AskUserQuestion` trước khi code: (1) cho phép tạo loại văn bản mới kèm flow riêng, (2) permission riêng `workflow:manage` (không gộp `user:manage`). Vì bảng `Workflow`/`WorkflowStep` đã đúng hình dạng cần dùng, **không cần migration Prisma** — thuần là CRUD route mới + trang admin mới, theo khuôn mẫu tính năng quản lý user đã có (`users.ts` + `UserListPage`/`UserFormPage`).
+
+### Những gì đã tạo ra thực tế
+**Backend:**
+- `prisma/seed.ts`: thêm `"workflow:manage"` vào permissions của `Director`.
+- `src/routes/workflows.ts` (mới): `GET /` và `GET /:id` chỉ cần `authenticate` (steps vốn đã lộ qua `document.workflow.steps`, không cần gate thêm — dùng chung cho cả dropdown "Loại văn bản" của trang Tạo văn bản lẫn trang admin). `POST /`, `PATCH /:id`, `DELETE /:id` gate thêm `authorize("workflow:manage")`. `name` bất biến sau khi tạo (không cho sửa qua `PATCH`) vì `Document.type` tra cứu workflow theo tên. Validate mọi tên vai trò trong `steps` khớp `Role` có thật trước khi ghi (400 nếu không). `POST` check trùng `name` → 409. `PATCH` khi đổi `steps`: `deleteMany` + `createMany` lại trong `$transaction`, mirror đúng pattern `seed.ts`. `DELETE` bắt `P2003` (còn Document tham chiếu, FK restrict) → 409 thân thiện thay vì lỗi 500 thô.
+- `src/index.ts`: mount `/api/workflows`.
+- `src/routes/documents.ts`: nới `type: z.enum([...])` thành `z.string().trim().min(1)` — mở khoá cho phép loại văn bản do admin tự đặt tên.
+
+**Frontend:**
+- `src/types.ts`: nới `DocumentSummary.type` từ union 3 giá trị sang `string`.
+- `src/api/client.ts`: thêm `apiPatch`/`apiDelete` dùng chung (trước đó `apiPatch` bị định nghĩa cục bộ trùng lặp trong `UserFormPage.tsx` — đã dọn về đây, xoá bản cục bộ).
+- `src/pages/WorkflowListPage.tsx` (mới): danh sách flow dạng card, mỗi card hiện tên loại văn bản + mô tả + chuỗi badge vai trò nối bằng icon mũi tên (preview trực quan thứ tự duyệt), nút Sửa/Xoá; xoá dùng `ConfirmDialog` có sẵn (không dùng `window.confirm`).
+- `src/pages/WorkflowFormPage.tsx` (mới): tạo/sửa flow — trường tên (khoá khi sửa) + mô tả + danh sách bước có thể chỉnh: mỗi bước là `Select` vai trò (load từ `/api/roles` có sẵn) + nút lên/xuống đổi thứ tự + nút xoá bước + nút "Thêm bước"; không dùng thư viện drag-and-drop (giữ đúng triết lý ít dependency).
+- `src/components/AppLayout.tsx`: thêm mục "Luồng duyệt" trong khối "Quản trị", gate theo `workflow:manage`; cập nhật `pageTitle()`.
+- `src/App.tsx`: thêm route `/workflows`, `/workflows/new`, `/workflows/:id/edit`.
+- `src/pages/CreateDocumentPage.tsx`: bỏ 3 `<option>` hardcode, fetch `GET /api/workflows` lúc mount, render dropdown "Loại văn bản" động.
+
+### Kết quả kiểm thử (toàn bộ PASS)
+- `tsc --noEmit` (backend) + `npm run build` (frontend) sạch.
+- `curl` (cookie `director`): `POST` với vai trò không tồn tại → 400; tạo flow mới hợp lệ → 201 đúng thứ tự `stepOrder`; tạo trùng tên → 409; `PATCH` đổi thứ tự bước → `GET` phản ánh đúng; `DELETE` flow `GENERAL` (đang có Document dùng) → 409; `DELETE` flow mới tạo (chưa có Document) → 204.
+- `curl` (cookie `staff`, không có quyền): `POST /api/workflows` → 403.
+- Qua Chrome MCP thật (2 tab, 1 `director` 1 `staff`): trang "Luồng duyệt" hiện đúng 3 flow có sẵn với chuỗi vai trò đúng; tạo flow mới "Đề xuất công tác" (Trưởng phòng → Giám đốc) qua UI (nhập tên, thêm bước, đổi role qua select) → lưu thành công, xuất hiện ngay trong danh sách; đăng nhập `staff` → sidebar **không** có mục "Luồng duyệt" (đúng gate quyền); tạo văn bản mới với `staff`, chọn loại "Đề xuất công tác" (chỉ xuất hiện trong dropdown vì vừa tạo, không hardcode) → vào trang chi tiết, stepper hiển thị đúng "Bước 1/2: Trưởng phòng → Giám đốc" khớp chính xác cấu hình vừa tạo qua UI.
+- Xác nhận lại: `DELETE` flow "Đề xuất công tác" sau khi đã có Document dùng → 409 (không xoá được), đúng như thiết kế.
+- Đã dừng cả 2 dev server sau khi test; Postgres container vẫn `Up ... (healthy)`. Dữ liệu test (flow + document "Test flow moi") còn lại trong DB dev cục bộ — không xoá vì minh hoạ đúng tính năng, không phải rác.
+
+### Bước tiếp theo
+Chưa có yêu cầu mới nào tiếp theo — roadmap MVP theo `PLAN.md` cộng tính năng bổ sung (quản lý user, workflow builder) coi như đầy đủ. Việc đồng bộ GitHub (Bước 10) vẫn chờ người dùng hoàn tất `gh auth login`.
+
+---
+
+## Bước 11.5 — Nâng cấp giao diện trình dựng flow (Nhóm A: thuần frontend)
+
+### Bối cảnh
+Sau khi dựng xong Bước 11, người dùng yêu cầu **thiết kế lại UI** trang dựng flow cho đẹp/trực quan hơn. Đã chốt qua `AskUserQuestion`: làm **Nhóm A trước** (thuần giao diện, không đụng backend/schema), sau này mở rộng **Nhóm B** (gán phòng ban theo bước, rẽ nhánh, duyệt song song — cần sửa schema + engine) như dự án riêng. Đã trình bày trước một mockup trực quan (qua công cụ visualize) để người dùng duyệt hướng thiết kế trước khi code.
+
+### Những gì đã tạo ra thực tế (chỉ frontend)
+- `src/pages.css`: thêm section "Workflow builder" — bộ class `.flow-step*` (card mỗi bước, có handle kéo-thả, badge số, chú thích phạm vi, chỉ báo vị trí thả `is-drop-before/after`), `.flow-preview*` (pipeline node + connector cho sơ đồ xem trước, node endpoint tô màu success), `.flow-card-mini*` (mini-pipeline nội tuyến cho card danh sách). Toàn bộ dùng biến token có sẵn nên tự đúng sáng-tối.
+- `src/pages/WorkflowFormPage.tsx`: viết lại phần bước duyệt — mỗi bước thành **card** (handle + số + `Select` vai trò + chú thích phạm vi động: Dept_Head → "Cùng phòng ban người nộp" (phản ánh đúng logic backend hiện có ở `lib/workflow.ts`), vai trò khác → "Bất kỳ ai giữ vai trò này"). Thêm **kéo-thả đổi thứ tự** bằng HTML5 drag-and-drop thuần (không thêm thư viện), giữ lại nút mũi tên lên/xuống cho bàn phím (accessible). Thêm khối **"Xem trước sơ đồ duyệt"** — pipeline cập nhật realtime khi chỉnh bước, có node "Nhân viên nộp" đầu và "Hoàn tất" cuối, dùng chung ngôn ngữ stepper với trang chi tiết văn bản.
+- `src/pages/WorkflowListPage.tsx`: đổi chuỗi badge phẳng thành **mini-pipeline đánh số** (nhất quán với sơ đồ trong form).
+- **Không đụng**: backend, schema, API, route, phân quyền — đúng cam kết "Nhóm A thuần giao diện".
+
+### Kết quả kiểm thử (PASS)
+- `npm run build` (frontend) sạch.
+- Qua Chrome MCP thật, login `director`: mở "Tạo flow" → card bước hiển thị đúng handle/số/select/chú thích; đổi vai trò bước 1 sang Trưởng phòng → chú thích phạm vi tự đổi sang "Cùng phòng ban người nộp"; "Thêm bước" → sơ đồ xem trước cập nhật realtime (Nhân viên nộp → 1 Trưởng phòng → 2 Kế toán → Hoàn tất); nút lên/xuống bật/tắt đúng ở biên. Trang danh sách: card hiện mini-pipeline đánh số. Bật **dark mode**: toàn bộ card + sơ đồ + node endpoint đọc tốt, không có phần tử vô hình.
+- Kéo-thả: logic `reorder()` kiểm chứng qua đọc code + đường bàn phím lên/xuống chạy thật (dùng chung hàm); native HTML5 DnD không kích hoạt ổn định qua sự kiện chuột tự động nên không diễn thật qua automation — nêu rõ, không nhận vơ.
+- Đã dừng cả 2 dev server sau khi test; Postgres container vẫn chạy.
+
+### Ghi nhận cho lần sau (không thuộc phạm vi Nhóm A, chưa làm)
+- **Nhóm B** (đã hẹn làm sau): gán đích danh phòng ban cho từng bước, điều kiện rẽ nhánh, duyệt song song — đều cần thêm cột DB + migration + sửa workflow engine.
+- Quan sát phụ (có từ Bước 11, không phải do redesign tạo ra): route `/workflows*` chỉ chặn bằng `ProtectedRoute` (đã đăng nhập), **chưa** chặn theo quyền `workflow:manage` phía client — user `Staff` gõ thẳng URL vẫn xem được trang admin (nút Sửa/Xoá hiện ra nhưng API mutation vẫn trả 403 đúng, không phải lỗ hổng bảo mật). Muốn chặt chẽ về UX nên thêm guard quyền cho các route admin — coi là việc polish riêng nếu người dùng muốn.
+
+---
+
+## Bước 12 — Audit Log toàn hệ thống + Bản duyệt đã ký + Role Admin toàn quyền
+
+### Bối cảnh & quyết định
+Người dùng yêu cầu: (1) **nhật ký hệ thống** ghi timestamp cho đăng nhập, duyệt hồ sơ và mọi thao tác, **phân loại theo nhóm**; (2) tải **"bản đã duyệt/đã ký"** riêng; (3) **admin toàn quyền**. Chốt qua `AskUserQuestion`:
+- Upload kéo-thả đã có ở trang Tạo văn bản → chỉ giữ nguyên; **không** thêm upload tự do ở trang chi tiết.
+- "Bản đã ký": người duyệt **bước cuối** đính kèm khi bấm Duyệt; sau khi `APPROVED` mọi người liên quan tải được (phân biệt file gốc `ORIGINAL` vs `APPROVED`).
+- **Admin là role riêng (tài khoản người dùng), Giám đốc là người khác**: tạo role `Admin` giữ wildcard `"*"`; **chuyển hết quyền quản trị về Admin** — Giám đốc mất `user:manage`/`workflow:manage`, chỉ còn `document:approve:final`.
+- Nhóm log đủ 5: `AUTH`, `DOCUMENT`, `USER`, `WORKFLOW`, `FILE`.
+
+### Đã tạo ra thực tế
+**Data (1 migration `add_audit_log_and_attachment_kind`):** model `AuditLog` (category, action, actorId/actorEmail, targetType/targetId, detail, ip, createdAt + index); `User.auditLogs`; `Attachment.kind @default("ORIGINAL")`.
+
+**Backend:**
+- `middlewares/authorize.ts`: hiểu wildcard — qua nếu `permissions` chứa `"*"` hoặc đúng permission.
+- `prisma/seed.ts`: thêm role `Admin ["*"]` + user `admin@example.com` (dept Ban Giám đốc, mật khẩu dev chung); Giám đốc rút còn `["document:approve:final"]`.
+- `lib/audit.ts` (mới): `audit({req,category,action,...})` fire-and-forget (nuốt lỗi, lấy IP từ `x-forwarded-for`/`req.ip`), không nằm trong transaction nghiệp vụ.
+- Gắn log: `auth.ts` (LOGIN/LOGOUT/LOGIN_FAILED, logout giải mã cookie best-effort); `documents.ts` (SUBMIT/APPROVE/REJECT/REQUEST_CHANGE/RESUBMIT/COMMENT + FILE_UPLOAD lúc tạo + FILE_DOWNLOAD); `users.ts` (USER_CREATE/UPDATE); `workflows.ts` (WORKFLOW_CREATE/UPDATE/DELETE).
+- `routes/audit.ts` (mới): `GET /api/audit` (`authenticate + authorize("audit:read")`), lọc `category`, phân trang `page`/`limit`, include actor safe-select, `orderBy createdAt desc`.
+- `routes/documents.ts` route approve: thêm `upload.single("approvedFile")`; chỉ khi lần duyệt chuyển sang `APPROVED` **và** có file → tạo `Attachment kind=APPROVED` trong cùng transaction; file ở bước không cuối → 400; dọn file mồ côi khi lỗi.
+
+**Frontend:**
+- `types.ts`: `AuditLog`/`AuditLogPage` + `Attachment.kind`. `lib/permissions.ts` (mới): `can(user,perm)` hiểu `"*"`. `lib/labels.ts`: nhãn/tông màu 5 nhóm + hành động audit.
+- `pages/AuditLogPage.tsx` (mới): bảng nhật ký + lọc theo nhóm + phân trang (Trước/Sau), thời gian GMT+7.
+- `AppLayout.tsx`: gate `canManageUsers`/`canManageWorkflows`/`canViewAudit` đổi sang `can()` (để Admin `"*"` thấy đủ menu) + mục "Nhật ký hệ thống"; `App.tsx` route `/audit`.
+- `DocumentDetailPage.tsx`: tách "File đính kèm" (ORIGINAL) và mục "Bản đã duyệt" (APPROVED); ở bước duyệt cuối có ô chọn "bản đã ký" tuỳ chọn → gửi `approve` bằng `apiPostForm` khi có file, JSON khi không.
+
+### Kết quả kiểm thử
+- `tsc --noEmit` (backend) + `npm run build` (frontend) sạch; migration + seed chạy OK (xác nhận qua psql: Admin `{*}`, Director `{document:approve:final}`, user `admin@example.com`).
+- **curl (đầy đủ, PASS):** sai mật khẩu → 401 + ghi `AUTH/LOGIN_FAILED` (kèm email); đăng nhập → 200 + `AUTH/LOGIN`. Admin (`*`) gọi `GET /api/documents` (cần `document:read:own`) → 200 (wildcard phủ). `staff` gọi `GET /api/audit` → 403; admin → 200 phân trang đúng, lọc `category` đúng. Luồng thật: staff tạo hồ sơ có file → `DOCUMENT/SUBMIT` + `FILE/FILE_UPLOAD`; dept_head duyệt bước 1 (JSON) → 200; director duyệt bước cuối kèm `approvedFile` → 200, hồ sơ `APPROVED`, có cả `ORIGINAL` + `APPROVED` attachment; đính kèm file ở bước không cuối → **400** đúng guard; tải file → `FILE/FILE_DOWNLOAD`; admin sửa user → `USER/USER_UPDATE`; admin tạo flow → `WORKFLOW/WORKFLOW_CREATE`. Đếm đủ cả 5 nhóm.
+- **Kiểm thử qua trình duyệt: KHÔNG diễn được** — trong phiên này máy chạy Chrome (Windows, khác máy server) mất đường mạng tới cả `192.168.10.9:5173` lẫn `localhost:5173` (Chrome ở máy khác), dù server phục vụ app đúng (curl 200, cả với Host header). Đây là sự cố mạng môi trường phát sinh giữa phiên (đầu phiên trình duyệt vẫn vào được ở Bước 11.5), **không phải lỗi code**. UI đã build sạch và dùng lại nguyên các primitive đã kiểm ở bước trước; phần cần mắt người xác nhận (trang Nhật ký, mục "Bản đã duyệt", ô chọn bản đã ký) chưa được nhìn tận mắt — nêu rõ, không nhận vơ.
+- Đã dừng cả 2 dev server; Postgres container vẫn chạy. Dữ liệu test còn trong DB dev.
+
+### Bước tiếp theo / ghi nhận
+- Cần kiểm thử trình duyệt phần frontend audit khi mạng tới máy Chrome khôi phục (đăng nhập `admin@example.com` → "Nhật ký hệ thống", lọc nhóm, phân trang; hồ sơ APPROVED có mục "Bản đã duyệt"; kiểm dark mode).
+- **Nhóm B workflow** (đã hẹn từ Bước 11.5) vẫn chưa làm.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+
+---
+
+## Bước 13 — Lập ACTION_PLAN.md cho đợt bổ sung tính năng (2026-07-16)
+
+### Bối cảnh & quyết định
+Người dùng yêu cầu duyệt lại toàn hệ thống và đề xuất tính năng còn thiếu. Đã rà soát toàn bộ backend (8 router) + frontend (9 trang) + `EXISTING-BUG.md`, trình 4 nhóm đề xuất và được chốt:
+- **Nhóm 1** (tài khoản cá nhân): lấy toàn bộ — tự đổi mật khẩu, trang Tài khoản, ép đổi mật khẩu lần đầu, Admin sửa email, vô hiệu hoá tài khoản; riêng "quên mật khẩu qua email" phụ thuộc SMTP, có thể hoãn.
+- **Nhóm 2** (luồng văn bản): lấy toàn bộ — sửa nội dung khi CHANGES_REQUESTED, thu hồi văn bản, đánh số văn bản, CRUD phòng ban chuyển sang GĐ3. **Định dạng số văn bản: KHÔNG dùng dấu "/"** (yêu cầu người dùng) → chốt `VB-YYYY-NNNN`.
+- **Nhóm 3**: **bỏ mục thông báo qua email**; giữ tìm kiếm/lọc/phân trang, dashboard + xuất Excel, uỷ quyền + nhắc hạn.
+- **Nhóm 4** (bảo mật, từ EXISTING-BUG.md): làm ĐẦU TIÊN theo đề xuất.
+- **Đóng dấu file đã duyệt**: người dùng hỏi cách nhận biết file đã approve → trình 3 phương án (dấu trực quan pdf-lib / QR xác minh / chữ ký số PAdES), chốt **phương án 1** (đóng dấu trực quan lên PDF), gộp vào kế hoạch (mục 2.4, làm sau đánh số văn bản vì dấu in kèm docNo).
+
+### Sản phẩm
+- **`ACTION_PLAN.md` (mới, thư mục gốc)**: kế hoạch chi tiết 5 giai đoạn (GĐ0 bảo mật → GĐ1 tài khoản → GĐ2 luồng văn bản → GĐ3 quản trị/tra cứu → GĐ4 nâng cao), mỗi mục có checkbox, chi tiết backend/frontend/migration và tiêu chí nghiệm thu; kèm sơ đồ phụ thuộc (2.4 cần 2.3; 3.3 nên sau 3.2).
+- **Quy trình đã cam kết với người dùng:** hoàn thành mục nào → tick `[x]` trong ACTION_PLAN.md + ghi kết quả chi tiết vào IMPLEMENTATION_PLAN.md (file này) + cập nhật trạng thái R-item trong EXISTING-BUG.md nếu có.
+
+### Bổ sung (cùng ngày) — Chữ ký mẫu do user upload
+- Người dùng hỏi thêm: có thể đóng dấu PDF bằng ảnh chữ ký riêng do user upload không. Trả lời: khả thi (`pdf-lib` `embedPng`/`embedJpg`), là biến thể của hạ tầng đóng dấu ở 2.4.
+- Thiết kế đã chốt và thêm vào ACTION_PLAN: **1.6** (upload/quản lý chữ ký mẫu per-user, `User.signatureUrl`, trang Tài khoản, khuyến nghị PNG nền trong suốt) + **2.5** (ở bước duyệt cuối, dựng **khối chữ ký cuối văn bản** cho TỪNG người đã duyệt — ảnh nếu có, fallback text; gộp 1 lần sinh file, dùng chung `lib/stamp.ts` với 2.4).
+- Nhấn mạnh: ảnh chữ ký chỉ là dấu hiệu trực quan, không chống giả mạo — tính xác thực thật vẫn phải dựa QR+SHA-256 / chữ ký số PAdES.
+
+### Trạng thái
+- Chưa bắt đầu thực hiện mục nào — chờ lệnh triển khai.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+
+---
+
+## Bước 14 — Giai đoạn 0 của ACTION_PLAN.md: Bảo mật trước go-live (2026-07-16)
+
+### Bối cảnh
+Người dùng ra lệnh "thực hiện thôi" — bắt đầu triển khai `ACTION_PLAN.md` từ đầu, đúng thứ tự Giai đoạn 0 → 4. Hoàn thành trọn Giai đoạn 0 (6/7 mục; R06/HTTPS ghi nhận chờ triển khai, không code được ở bước này).
+
+### Đã tạo ra thực tế
+
+**0.1 — JWT_SECRET mạnh:** sinh bằng `openssl rand -hex 64`, thay vào `backend/.env`; `backend/.env.example` thêm dòng ghi chú cách sinh + cảnh báo không dùng giá trị mẫu.
+
+**0.2 — Mật khẩu Postgres + bind localhost:** làm đúng thứ tự 4 bước đã ghi sẵn trong `EXISTING-BUG.md` — `ALTER USER eapproval PASSWORD ...` trên container đang chạy (không đụng volume, không mất dữ liệu) → cập nhật `POSTGRES_PASSWORD` (root `.env`) + `DATABASE_URL` (`backend/.env`) khớp mật khẩu mới (32 ký tự alphanumeric, tránh vấn đề encode URL) → `docker-compose.yml` đổi port mapping thành `127.0.0.1:${POSTGRES_PORT:-5432}:5432` → `docker compose up -d` recreate container. Cả 2 file `.env.example` (root + backend) thêm ghi chú sinh mật khẩu mạnh.
+
+**0.3 — Guard seed script:** thêm `assertSafeToSeed()` đầu `main()` trong `backend/prisma/seed.ts` — chặn khi `NODE_ENV=production` trừ khi có `FORCE_SEED=1`.
+
+**0.4 — Rate limiting login:** cài `express-rate-limit`; `backend/src/routes/auth.ts` thêm `loginRateLimiter` (10 lần/15 phút/IP, message tiếng Việt) áp riêng cho `POST /login`.
+
+**0.5 — Helmet:** cài `helmet`; `backend/src/index.ts` thêm `app.use(helmet())` trước mọi route (cấu hình mặc định — backend là API JSON thuần, không render HTML nên không cần tuỳ chỉnh CSP).
+
+**0.6 — Kiểm tra MIME theo magic bytes:** cài `file-type` (v22, ESM-only). Thêm middleware `verifyMagicBytes` trong `backend/src/lib/upload.ts`, chạy sau khi multer ghi file lên đĩa — đối chiếu magic bytes thật với phần mở rộng khai báo (`.pdf`→`application/pdf`, `.docx`→OOXML mime), không khớp thì xoá file + báo lỗi 400 cùng dạng message với lỗi extension cũ (để error handler chung ở `index.ts` xử lý thống nhất). Gắn vào cả `POST /api/documents` (upload lúc tạo) và `POST /api/documents/:id/approve` (bản đã ký). Vì `file-type` là ESM-only và dự án dùng `moduleResolution: "node"`, TypeScript không tự resolve type declarations của nó qua `import()` động — thêm ambient module declaration riêng ở `backend/src/types/file-type.d.ts` (chỉ khai báo đúng phần thực dùng, không đổi cấu hình `tsconfig.json` toàn dự án để tránh rủi ro lan rộng).
+
+### Kết quả kiểm thử (PASS, đều qua curl + trình thật, không suy đoán)
+- `tsc --noEmit` sạch.
+- **0.1:** restart backend + login lại bằng token mới thành công.
+- **0.2:** container `Up (healthy)` sau recreate; `ss -tlnp` xác nhận cổng 5432 chỉ còn nghe `127.0.0.1` (trước đó `0.0.0.0`); backend reconnect DB thành công; login thật (`director@example.com`) trả đúng dữ liệu cũ (`createdAt` từ 2026-07-15) — xác nhận không mất dữ liệu qua đợt đổi mật khẩu + recreate container.
+- **0.3:** `NODE_ENV=production npx tsx prisma/seed.ts` → bị chặn (exit 1); chạy lại không set `NODE_ENV` → seed chạy OK (exit 0).
+- **0.4:** 11 lần login sai liên tiếp cùng IP → 10 lần đầu 401, lần 11 → 429; đối chiếu bảng `AuditLog` qua `docker exec ... psql` xác nhận đúng 10 entry `AUTH/LOGIN_FAILED` (lần bị chặn không tính vào audit, đúng vì rate limiter chặn trước khi chạm route handler).
+- **0.5:** `curl -D -` xác nhận đủ header Helmet (CSP, HSTS, X-Frame-Options, X-Content-Type-Options...); WebSocket không bị ảnh hưởng (xác nhận qua đọc code `lib/ws.ts` — gắn trực tiếp vào sự kiện `upgrade` của HTTP server, không đi qua Express middleware nên Helmet không chạm tới).
+- **0.6:** upload file ELF đổi đuôi thành `.pdf` → 400 đúng message, không còn file rác trong `UPLOAD_DIR` (đối chiếu `ls` trước/sau); PDF thật (`%PDF-1.4` header hợp lệ) và DOCX thật (tạo bằng `python3 zipfile` với `[Content_Types].xml` đúng chuẩn OOXML) đều qua bình thường (201, không false positive).
+- Dữ liệu test (3 văn bản + attachment tạo trong lúc kiểm thử) đã dọn sạch khỏi DB và `UPLOAD_DIR` ngay sau khi test xong.
+- Dừng dev server sau khi test xong; container Postgres vẫn chạy healthy.
+
+### Trạng thái
+- Giai đoạn 0 hoàn tất 6/7 mục (0.1–0.6); 0.7 (HTTPS) ghi nhận chờ lúc triển khai thật, không thuộc phạm vi sửa code.
+- `ACTION_PLAN.md` đã tick `[x]` cho 0.1–0.6; `EXISTING-BUG.md` đã cập nhật R01/R02/R03/R04/R05/R07 thành `✅ ĐÃ FIX — 2026-07-16 (chưa commit)`.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- Bước tiếp theo: Giai đoạn 1 (Tài khoản cá nhân) theo `ACTION_PLAN.md`, bắt đầu từ mục 1.1 (tự đổi mật khẩu + trang Tài khoản).
+
+---
+
+## Bước 15 — Giai đoạn 1 của ACTION_PLAN.md: Tài khoản cá nhân (2026-07-16)
+
+### Bối cảnh
+Tiếp nối Bước 14, thực hiện Giai đoạn 1 trọn vẹn: 1.1, 1.2, 1.3, 1.4, 1.6 hoàn thành; 1.5 (quên mật khẩu qua email) hoãn có chủ đích vì phụ thuộc SMTP chưa có, đúng như đã ghi sẵn trong `ACTION_PLAN.md`.
+
+### Đã tạo ra thực tế
+
+**Migration (1 file `add_user_account_fields`):** `User` thêm 3 cột — `mustChangePassword Boolean @default(false)`, `isActive Boolean @default(true)`, `signatureUrl String?`.
+
+**Backend:**
+- `lib/upload.ts`: tách `verifyMagicBytes` thành factory `createMagicByteVerifier(allowedMimeMap, message)` để dùng chung cho cả upload văn bản (pdf/docx) và chữ ký (png/jpg); thêm `signatureUpload` (multer riêng, giới hạn 1MB, 1 file) + `verifySignatureMagicBytes`.
+- `index.ts`: nới điều kiện bắt lỗi upload từ `startsWith("Chỉ chấp nhận file")` thành `startsWith("Chỉ chấp nhận")` để khớp cả message lỗi ảnh chữ ký.
+- `middlewares/authenticate.ts`: chặn `isActive=false` ngay ở middleware (không chỉ lúc login) — phiên đang mở của user bị khoá giữa chừng lập tức nhận 401.
+- `routes/auth.ts`: thêm `POST /change-password` (verify mật khẩu cũ, set `mustChangePassword=false`, audit `PASSWORD_CHANGE`); login từ chối `isActive=false` bằng đúng message chung "Email hoặc mật khẩu không đúng" (không lộ trạng thái tài khoản cho kẻ tấn công); thêm `GET/POST/DELETE /signature` (lưu `signatureUrl`, xoá file cũ khi thay/xoá, dọn file mồ côi khi lỗi, audit `SIGNATURE_SET`/`SIGNATURE_CLEAR`).
+- `routes/users.ts`: `SAFE_USER_SELECT` thêm `mustChangePassword`/`isActive`; tạo user luôn set `mustChangePassword=true`; `updateUserSchema` thêm `email`/`isActive` optional; PATCH set `mustChangePassword=true` khi Admin reset mật khẩu người khác; chặn tự vô hiệu hoá chính mình (400); bắt P2002 cho email trùng (409); audit `USER_DISABLE`/`USER_ENABLE` riêng khi đổi `isActive`.
+- `backend/src/types/file-type.d.ts` (từ Bước 14) tái sử dụng nguyên vẹn.
+
+**Frontend:**
+- `types.ts`: `User` thêm `mustChangePassword`, `isActive`, `signatureUrl`.
+- `context/AuthContext.tsx`: expose `setUser` để các trang tự cập nhật user hiện tại sau khi đổi mật khẩu/chữ ký mà không cần refetch `/me`.
+- `components/ProtectedRoute.tsx`: nếu `user.mustChangePassword` và không đang ở `/account` → redirect cưỡng bức `/account?force=1`.
+- `pages/AccountPage.tsx` (mới): 3 khối — thông tin cá nhân (chỉ đọc), đổi mật khẩu (cảnh báo `Alert` khi bị ép đổi), chữ ký mẫu (preview ảnh qua `GET /api/auth/signature`, tải lên/thay/xoá qua `ConfirmDialog`, cache-bust bằng query `?v=`). Route `/account` đăng ký trong `App.tsx`; link "Tài khoản của tôi" thêm vào dropdown user trong `AppLayout.tsx`.
+- `pages/UserFormPage.tsx`: mở khoá ô email khi sửa (trước đây `disabled={isEdit}`); thêm checkbox "Trạng thái tài khoản" (ẩn khi tạo mới, disable khi tự sửa chính mình).
+- `pages/UserListPage.tsx`: thêm cột badge trạng thái (Đang hoạt động/Đã vô hiệu hoá).
+- `lib/labels.ts`: thêm nhãn audit action `USER_DISABLE`, `USER_ENABLE`, `SIGNATURE_SET`, `SIGNATURE_CLEAR`, `PASSWORD_CHANGE`.
+
+### Kết quả kiểm thử
+
+**Backend (PASS, đầy đủ qua curl thật):**
+- `tsc --noEmit` sạch.
+- Tạo user qua Admin → `mustChangePassword:true` đúng trong response.
+- Login user mới → đổi mật khẩu sai mật khẩu cũ → 400 "Mật khẩu hiện tại không đúng"; đổi đúng → 200, `mustChangePassword:false`; login lại bằng mật khẩu mới → 200.
+- Admin sửa email user khác → 200; sửa trùng với email đã tồn tại → 409 "Email đã tồn tại".
+- Admin tự vô hiệu hoá chính mình → 400 (chặn đúng); vô hiệu hoá user khác → 200; user đó login lại → 401; **phiên đang mở của user đó gọi `/api/auth/me` ngay lập tức → 401 "Tài khoản đã bị vô hiệu hoá"** (xác nhận middleware `authenticate` chặn giữa phiên, không chỉ lúc login); mở khoá lại → login lại OK.
+- Chữ ký mẫu: chưa có → `GET /signature` 404; upload PNG hợp lệ (tạo bằng `python3` zlib, không phải file có sẵn) → 201, `signatureUrl` trả về; upload file ELF đổi đuôi `.png` → 400 đúng magic-byte check tái dùng từ mục 0.6; `GET /signature` trả đúng ảnh (header `Content-Type` đúng); `DELETE` → 200, `signatureUrl: null`; `GET` lại → 404. Không còn file rác trong `UPLOAD_DIR` sau toàn bộ chuỗi test (đối chiếu `ls`).
+- Dữ liệu test (1 user, 8 audit log entry liên quan) đã dọn sạch khỏi DB ngay sau khi test.
+
+**Frontend:**
+- `npm run build` sạch (2 lần — lần đầu phát hiện tự bắt 1 lỗi thật: dùng nhầm token CSS `var(--radius-md)` [không tồn tại trong `index.css`] thay vì `var(--r-md)` đúng chuẩn dự án trong `AccountPage.tsx`; đã sửa và build lại sạch).
+- **Kiểm thử qua trình duyệt thật: KHÔNG diễn được** — tái hiện đúng sự cố mạng đã ghi ở Bước 12: Chrome (máy khác) không kết nối được tới cả `localhost:5173` lẫn `192.168.10.9:5173` dù đã bind `vite --host 0.0.0.0` và `curl` cục bộ xác nhận server trả `200` bình thường ở cả 2 địa chỉ. Thử lại 4 lần (2 tab, cả 2 địa chỉ) đều lỗi `Frame ... showing error page` / `Cannot access a chrome:// URL` phía extension — không phải lỗi code. Nêu rõ, không nhận vơ đã kiểm bằng mắt.
+- Đã rà soát kỹ code thay thế cho việc kiểm bằng mắt (đọc lại toàn bộ `AccountPage.tsx`, đối chiếu từng token CSS dùng với `index.css`/`ui.css`/`layout.css` thực tế của dự án — bắt được lỗi token nêu trên).
+
+### Trạng thái
+- Giai đoạn 1 hoàn tất 5/6 mục (1.1, 1.2, 1.3, 1.4, 1.6); **1.5 hoãn có chủ đích** — chưa có tài khoản SMTP nội bộ, fallback hiện tại (Admin reset mật khẩu + ép đổi lại qua 1.2) đủ dùng.
+- `ACTION_PLAN.md` đã tick `[x]` cho 1.1–1.4, 1.6 và ghi chú hoãn cho 1.5.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- **Cần làm khi có điều kiện:** kiểm thử bằng mắt qua trình duyệt thật (trang Tài khoản, luồng ép đổi mật khẩu, upload/xoá chữ ký, badge trạng thái user, checkbox vô hiệu hoá) khi mạng tới Chrome khôi phục — ưu tiên xác nhận layout/dark mode của `AccountPage.tsx` vì đây là trang hoàn toàn mới chưa từng được nhìn tận mắt.
+- Bước tiếp theo: Giai đoạn 2 (Luồng văn bản) theo `ACTION_PLAN.md`, bắt đầu từ mục 2.1 (sửa nội dung khi CHANGES_REQUESTED).
+
+---
+
+## ⚠️ SỰ CỐ NGHIÊM TRỌNG — Mất toàn bộ dữ liệu DB (2026-07-16, trong lúc làm Bước 16 / mục 2.3)
+
+### Tóm tắt
+Trong lúc thực hiện mục 2.3 (đánh số văn bản), lệnh `npx prisma migrate dev --name add_document_docno` đã **xoá sạch toàn bộ dữ liệu trong database dev** (bảng `User`, `Document`, `Role`, `Department`, `Workflow`, `AuditLog`... tất cả về 0 dòng), dù schema (cấu trúc bảng/cột) sau đó vẫn đúng.
+
+### Nguyên nhân gốc (xác nhận qua log Postgres)
+1. Từ trước đó (không rõ từ session nào), bảng theo dõi `_prisma_migrations` **không tồn tại** trong DB — dù schema thực tế đã phản ánh đúng 5 migration trước đó (kể cả migration `add_user_account_fields` vừa chạy thành công ở Bước 15). Nói cách khác: DB "lệch" khỏi migration history theo cách Prisma nhìn thấy, dù dữ liệu/cấu trúc vẫn đúng.
+2. Khi chạy `prisma migrate dev` (không có cờ `--create-only`) trong tình huống DB có "drift" kiểu này, Prisma tự động thực hiện **reset** (drop schema, replay lại toàn bộ migration từ đầu) để đưa DB về khớp với migration history — bước reset này chạy **trước** khi hỏi xác nhận tương tác. Vì phiên này chạy non-interactive (qua Bash tool), lệnh xác nhận cuối cùng (tạo migration mới) mới báo lỗi "non-interactive environment" — nhưng lúc đó DB **đã bị reset xong**, replay lại đúng cấu trúc bảng (schema) nhưng KHÔNG replay được dữ liệu (migration chỉ chứa DDL, không chứa INSERT).
+3. Xác nhận qua log Postgres (`docker logs etool-postgres-1`): loạt checkpoint "immediate force wait" dồn dập lúc `16:21:29–16:21:51 UTC` (`23:21 GMT+7`) — đúng thời điểm ngay sau lệnh `migrate dev` đầu tiên của mục 2.3 — là dấu hiệu đặc trưng của thao tác drop+recreate schema.
+4. Không có backup nào tồn tại (đã tìm `find` toàn hệ thống, không thấy file `.sql`/`.dump` nào) — **R15 trong `EXISTING-BUG.md` ("Không có backup database tự động") đã cảnh báo đúng rủi ro này từ trước**, nhưng chưa được xử lý.
+
+### Dữ liệu đã mất
+Toàn bộ dữ liệu trong DB dev tại thời điểm xảy ra sự cố: 5 user seed (`staff/depthead/director/accountant/admin@example.com`), 3 Workflow (GENERAL/PURCHASE/PAYMENT) + step, 2 Department, 6 Role, và bất kỳ Document/DocumentLog/Attachment/AuditLog nào còn sót lại từ các phiên làm việc trước (phần lớn dữ liệu test đã được dọn sạch theo quy trình ở các bước trước, nhưng không loại trừ khả năng có dữ liệu thật/dữ liệu demo được người dùng tạo qua UI ở phiên khác mà tài liệu này không ghi nhận). **Không thể khôi phục** — không có backup, không có WAL archiving.
+
+### Bài học & thay đổi bắt buộc cho các lần sau
+- **TUYỆT ĐỐI KHÔNG chạy `prisma migrate dev` (thiếu `--create-only`) trong môi trường non-interactive này nữa.** Quy trình migration an toàn đã dùng ở cuối mục 2.3 (và phải dùng từ nay): `prisma migrate diff --from-migrations ... --to-schema-datamodel ... --script` → tự tạo thư mục migration + file SQL → `prisma migrate deploy` (không bao giờ tự ý reset).
+- Trước khi chạy bất kỳ lệnh migration nào, **luôn kiểm tra `_prisma_migrations` có tồn tại và khớp với `prisma/migrations` trên đĩa** (`prisma migrate status`) — nếu báo "chưa migration nào được áp dụng" dù schema đã đúng, đây là dấu hiệu drift nguy hiểm, phải baseline bằng `migrate resolve --applied` cho từng migration cũ trước, TUYỆT ĐỐI không chạy `migrate dev` để "tự sửa".
+- **Đã thêm vào `ACTION_PLAN.md` Giai đoạn 3 (mục 3.4 mới, xem bên dưới): thiết lập backup database tự động** — đáng lẽ phải làm sớm hơn nhiều, không nên để tới Giai đoạn 3 mới làm. Cân nhắc nâng độ ưu tiên.
+
+### Trạng thái xử lý
+- Đã dừng toàn bộ dev server, không thực hiện thêm thao tác nào lên DB.
+- **CHƯA re-seed** — dừng lại để báo cáo và xin ý kiến người dùng trước khi làm bất kỳ điều gì tiếp theo, vì đây là thay đổi trạng thái nghiêm trọng cần người dùng biết trước.
+- Toàn bộ code Giai đoạn 0–2 (2.1, 2.2, 2.3 backend/frontend, đã qua `tsc`/`build` sạch) không bị ảnh hưởng — vấn đề chỉ nằm ở dữ liệu DB, không phải code.
+
+### Xử lý sau khi báo cáo người dùng
+Người dùng chọn phương án **chạy lại seed script** để khôi phục dữ liệu nền (chấp nhận mất dữ liệu test, không có dữ liệu thật nào được xác nhận là bị mất). Đã chạy `npx prisma db seed` — khôi phục đầy đủ 5 Role, 2 Department, 5 User mẫu, 3 Workflow; xác nhận qua `psql` đúng đủ. `prisma migrate status` xác nhận "Database schema is up to date" — vấn đề bảng `_prisma_migrations` cũng đã được giải quyết dứt điểm qua bước baseline (`migrate resolve --applied`) làm trước đó trong mục 2.3, không còn nguy cơ tái diễn từ quy trình migration cũ.
+
+---
+
+## Bước 17 — Giai đoạn 2 của ACTION_PLAN.md: Luồng văn bản (2026-07-16)
+
+### Bối cảnh
+Hoàn thành 3/5 mục của Giai đoạn 2: 2.1 (sửa nội dung khi CHANGES_REQUESTED), 2.2 (thu hồi văn bản), 2.3 (đánh số văn bản tự động). Mục 2.4 (đóng dấu PDF) và 2.5 (chữ ký vào PDF) chưa làm — độ phức tạp cao (thư viện mới, font embedding), để lại làm riêng.
+
+### Đã tạo ra thực tế
+
+**2.1 — Sửa nội dung khi CHANGES_REQUESTED:**
+- Backend: `PATCH /api/documents/:id` (`routes/documents.ts`) — chỉ creator, chỉ khi `status === "CHANGES_REQUESTED"`; multipart nhận `title`/`formData` (JSON string) optional, `removeAttachmentIds` (JSON array string, chỉ xoá được attachment `kind !== "APPROVED"` thuộc đúng văn bản — chặn xoá chéo qua id đoán được), file mới qua field `attachments` (tái dùng `upload`/`verifyMagicBytes` từ mục 0.6). Trong 1 transaction: xoá attachment cũ (DB), tạo attachment mới, ghi `DocumentLog action="EDIT"`, update document — file vật lý bị xoá CHỈ SAU khi transaction commit; file mới lỗi thì dọn file mồ côi (theo đúng pattern đã có ở route tạo document). Audit `DOCUMENT/EDIT` + `FILE_UPLOAD`/`FILE_DELETE` (action mới) cho từng file.
+- Frontend: `api/client.ts` thêm `apiPatchForm` (PATCH multipart, trước đây chỉ có POST multipart). `DocumentDetailPage.tsx` thêm chế độ chỉnh sửa inline (nút "Chỉnh sửa" → Card với tiêu đề/formData/checkbox đánh dấu xoá file cũ (gạch ngang khi chọn)/dropzone thêm file mới → Lưu/Huỷ). `lib/labels.ts` thêm nhãn `EDIT`.
+
+**2.2 — Thu hồi văn bản:** `POST /api/documents/:id/withdraw` — creator, chỉ khi PENDING, chuyển `WITHDRAWN`, ghi log + audit + notify. **Quyết định thiết kế đã chốt:** không cho nộp lại từ WITHDRAWN, muốn trình lại phải tạo văn bản mới (tránh phức tạp hoá workflow engine). Frontend: nút "Thu hồi" (ghost, icon `Undo2`) + `ConfirmDialog` cảnh báo rõ hệ quả không đảo ngược được. `types.ts`/`lib/labels.ts` thêm trạng thái `WITHDRAWN` (badge tông `neutral`) và action `WITHDRAW`.
+
+**2.3 — Số văn bản tự động:** Migration `add_document_docno` — `Document.docNo String? @unique` + model mới `DocCounter(year Int @id, seq Int)`. `lib/dateUtils.ts` (mới) — `currentYearVN()` dùng `Intl.DateTimeFormat` với `timeZone: "Asia/Ho_Chi_Minh"` (không cộng trừ offset thủ công, tránh sai lệch quanh nửa đêm). Trong transaction tạo document: `tx.docCounter.upsert({where:{year}, create:{seq:1}, update:{seq:{increment:1}}})` — 1 câu SQL atomic (`INSERT...ON CONFLICT DO UPDATE`), Postgres khoá dòng theo `year` nên không trùng số dưới tải đồng thời. Định dạng `VB-{năm}-{số 4 chữ số}` (đúng yêu cầu không dùng dấu "/"). Không có văn bản cũ nào cần backfill (bảng `Document` đang trống ở thời điểm làm — xác nhận qua `psql`, bỏ qua bước viết script backfill vì không có gì để chạy). Frontend: cột "Số VB" ở `DocumentListPage`, hiện `docNo` ở subtitle trang chi tiết (font mono).
+
+### Sự cố giữa chừng
+**Mất toàn bộ dữ liệu DB do `prisma migrate dev` tự reset** — xem chi tiết đầy đủ ở mục "⚠️ SỰ CỐ NGHIÊM TRỌNG" ngay phía trên. Đã báo cáo người dùng qua `AskUserQuestion`, được chọn phương án re-seed, đã thực hiện xong. Toàn bộ test integration của 2.1/2.2 mô tả dưới đây **đã chạy lại sau khi khôi phục dữ liệu** để đảm bảo kết quả phản ánh đúng trạng thái hiện tại.
+
+### Kết quả kiểm thử (PASS, đầy đủ qua curl thật)
+- `tsc --noEmit` (backend) + `npm run build` (frontend) sạch.
+- **2.1:** luồng đầy đủ — staff tạo văn bản kèm PDF gốc → dept_head yêu cầu chỉnh sửa → staff `PATCH` đổi tiêu đề + formData + xoá file gốc + thêm file mới → response đúng: tiêu đề mới, formData mới, chỉ còn file mới, log có `EDIT` đúng người/đúng lúc. Guard: người khác PATCH → 403; PATCH khi đã ở PENDING (sau resubmit) → 400. Không còn file rác trong `UPLOAD_DIR` sau khi xoá attachment.
+- **2.2:** người khác thu hồi → 403; chủ nhân thu hồi khi PENDING → 200, status `WITHDRAWN`, log có `WITHDRAW`; thu hồi lần 2 → 400; văn bản biến mất khỏi `/api/documents/pending` của người duyệt ngay sau khi thu hồi.
+- **2.3:** **test tải thực — 8 request tạo văn bản đồng thời (`curl ... &` + `wait`)** → cấp đúng 8 số liên tiếp không trùng `VB-2026-0001` → `VB-2026-0008`, xác nhận cơ chế atomic hoạt động đúng dưới race condition thật, không chỉ đọc code suy luận.
+- Toàn bộ dữ liệu test (documents, logs, DocCounter) đã dọn sạch sau khi test.
+- Dừng dev server sau khi test; Postgres container vẫn `healthy`.
+
+### Kiểm thử trình duyệt
+**KHÔNG diễn được** — đã thử lại nhiều lần theo gợi ý của người dùng ("sử dụng chrome trên Windows"), xác nhận Chrome chạy trên máy Windows riêng (không phải máy chủ này — `ps`/`ss` trên server không thấy tiến trình Chrome nào), và máy đó không có đường mạng tới `192.168.10.9:5173` dù đã bind `vite --host 0.0.0.0` và server phản hồi `200` bình thường qua `curl` nội bộ. Đây là vấn đề mạng ngoài khả năng xử lý từ phía server — không phải lỗi code. Đã rà soát kỹ code (bắt được 1 lỗi CSS token thật ở Bước 15) để bù đắp phần nào cho việc không kiểm bằng mắt được.
+
+### Bài học quy trình cho các lần sau (áp dụng từ Bước 17 trở đi)
+- **Không bao giờ chạy `prisma migrate dev` thiếu `--create-only` trong phiên non-interactive này nữa.** Quy trình chuẩn từ nay: `prisma migrate diff --from-migrations ... --to-schema-datamodel ... --script` → tự tạo migration folder → `prisma migrate deploy`. Luôn `prisma migrate status` trước để phát hiện drift sớm.
+
+### Trạng thái
+- Giai đoạn 2 hoàn tất 3/5 mục (2.1, 2.2, 2.3). **2.4 (đóng dấu PDF) và 2.5 (chữ ký vào PDF) chưa làm** — để lại vì độ phức tạp cao (cần `pdf-lib`, font Unicode embed, logic vẽ khối chữ ký nhiều người duyệt).
+- `ACTION_PLAN.md` đã tick `[x]` cho 2.1, 2.2, 2.3.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- Bước tiếp theo: mục 2.4 + 2.5 (đóng dấu PDF + chữ ký), sau đó Giai đoạn 3 (Quản trị & tra cứu).
+
+---
+
+## Bước 18 — Mục 2.4 + 2.5: Đóng dấu PDF tự động + khối chữ ký người duyệt (2026-07-17)
+
+### Bối cảnh
+Người dùng yêu cầu: chữ ký đóng vào PDF cần tự động kèm thêm tên và timestamp — đúng như thiết kế đã ghi sẵn ở mục 2.5, xác nhận triển khai tiếp theo đúng kế hoạch. Làm gộp 2.4 (đóng dấu "ĐÃ PHÊ DUYỆT") + 2.5 (khối chữ ký) vì dùng chung `lib/stamp.ts`.
+
+### Chuẩn bị font
+Cần font Unicode TTF hỗ trợ tiếng Việt có dấu để nhúng vào PDF (font mặc định của `pdf-lib` không có). Thay vì tải font từ mạng, kiểm tra máy đã có sẵn **DejaVu Sans** (gói hệ thống `fonts-dejavu-core`, `/usr/share/fonts/truetype/dejavu/`) — xác nhận phủ đủ ký tự tiếng Việt qua `fc-list :charset=1ec7` (ệ) và `:lang=vi`. Copy `DejaVuSans.ttf` + `DejaVuSans-Bold.ttf` vào `backend/assets/fonts/` (kèm `README.md` ghi nguồn gốc + giấy phép Bitstream Vera — tự do nhúng/phân phối lại).
+
+### Đã tạo ra thực tế
+
+**Cài đặt:** `pdf-lib`, `@pdf-lib/fontkit`.
+
+**`backend/src/lib/dateUtils.ts`:** thêm `formatDateTimeVN(date)` — tự ghép `"dd/MM/yyyy HH:mm (GMT+7)"` từ `Intl.DateTimeFormat.formatToParts` (locale `vi-VN` mặc định đặt giờ TRƯỚC ngày, không hợp thói quen đọc trên văn bản nên phải tự ghép thay vì dùng thẳng `.format()`).
+
+**`backend/src/lib/stamp.ts` (mới):** `stampApprovedPdf(pdfBytes, {docNo, approvers})` — load PDF bằng `pdf-lib`, `registerFontkit`, nhúng 2 font DejaVu (đọc 1 lần lúc module load, cache lại). Vẽ 2 phần:
+1. **Trang bìa xác nhận** (chèn ở đầu tài liệu qua `insertPage(0, ...)`): khung đỏ "ĐÃ PHÊ DUYỆT" + số văn bản + người duyệt cuối (đã dịch vai trò sang tiếng Việt) + thời điểm GMT+7.
+2. **Trang phụ lục chữ ký** (thêm ở cuối): với mỗi người trong `APPROVE` log theo đúng thứ tự — nhúng ảnh chữ ký (`embedPng`/`embedJpg` tuỳ đuôi file, scale giữ tỉ lệ, giới hạn khung 130×50) nếu có `signatureUrl`, không có thì vẽ khung "(Chưa có chữ ký mẫu)"; kèm họ tên (bold) + vai trò (dịch VN) + "Duyệt lúc: ..." GMT+7. Tự sang trang phụ lục mới nếu danh sách dài.
+- Map `ROLE_LABELS_VN` nội bộ (Staff/Dept_Head/Director/Accountant/Admin) — mirror `ROLE_LABELS` phía frontend nhưng độc lập (backend trước đây không có bản dịch vai trò nào).
+
+**`backend/src/routes/documents.ts`:** thêm hàm `autoStampApprovedPdfs(req, document)` — query các `DocumentLog action="APPROVE"` kèm `user.{fullName, signatureUrl, role.name}`, với mỗi attachment `kind !== "APPROVED"` và `mimeType === "application/pdf"`: đọc file gốc, gọi `stampApprovedPdf`, ghi file mới (`crypto.randomUUID().pdf`), tạo `Attachment kind="APPROVED"` (tên gốc bỏ đuôi `.pdf` + hậu tố `-da-duyet.pdf`), audit `FILE/FILE_UPLOAD`. Toàn bộ bọc `try/catch` — lỗi đóng dấu chỉ log ra console, không chặn việc duyệt. Route `approve`: sau khi transaction duyệt commit, nếu `updated.status === "APPROVED" && !approvedFile` (không có bản ký tay thủ công) → gọi hàm trên rồi **refetch document** (`loadDocumentForAction`) để response có đủ attachment mới sinh.
+
+### ⚠️ Lỗi phát hiện qua test thật — chồng lấn nội dung
+Thiết kế ban đầu (ghi trong `ACTION_PLAN.md`) là vẽ khung dấu đè lên góc trên-phải TRANG ĐẦU. Test với PDF thật (tạo bằng chính `pdf-lib`, có text ở gần đầu trang) → render ra ảnh bằng `pdftoppm` để xem trực tiếp → phát hiện dòng số văn bản trong khung dấu **chồng lên chữ nội dung gốc**, đọc thành `"...pdf/2026-0001hat)"`. Nguyên nhân: không có cách biết trước bố cục PDF người dùng upload để né chỗ trống một cách an toàn. **Đã sửa ngay:** chuyển khung dấu sang **trang bìa riêng** (`insertPage(0)`) thay vì vẽ đè — cùng nguyên tắc an toàn đã áp dụng sẵn cho khối chữ ký (trang phụ lục riêng, không đoán bố cục). Test lại sau khi sửa: không còn chồng lấn ở bất kỳ trang nào.
+
+### Kết quả kiểm thử (PASS, đầy đủ qua curl + xem PDF thật render ra ảnh)
+- `tsc --noEmit` sạch.
+- Tạo PDF thật hợp lệ bằng `pdf-lib` (`PDFDocument.create()`) để test — file `.pdf` giả tối giản dùng ở các bước test trước đó (chỉ đủ qua kiểm tra magic bytes) **không đủ hợp lệ để `PDFDocument.load()` parse được**, cần phân biệt rõ 2 loại "PDF giả" này.
+- Upload chữ ký PNG thật cho `depthead@example.com`, để `director@example.com` KHÔNG có chữ ký — test cả 2 nhánh (có ảnh / fallback text) trong cùng 1 văn bản.
+- Luồng GENERAL 2 bước (Dept_Head → Director), không upload bản ký tay: duyệt xong sinh đúng 1 file `APPROVED` mới (`*-da-duyet.pdf`), tải về, `PDFDocument.load()` parse lại thành công (không hỏng), đúng 3 trang (bìa + nội dung gốc + phụ lục). **Render `pdftoppm` ra ảnh và xem trực tiếp bằng mắt** (không chỉ tin code): trang bìa hiện đúng "ĐÃ PHÊ DUYỆT" + số văn bản + "Lê Văn Giám Đốc (Giám đốc)" + giờ GMT+7, không chồng lấn; trang nội dung gốc còn nguyên vẹn; trang phụ lục hiện đúng 2 dòng theo thứ tự duyệt — Trần Thị Trưởng Phòng có ảnh chữ ký (khối màu test), Lê Văn Giám Đốc hiện khung "(Chưa có chữ ký mẫu)" đúng thiết kế fallback; tiếng Việt có dấu hiển thị đúng hoàn toàn (kể cả dấu nặng/móc: "Thị", "Trưởng", "Phòng", "Đốc").
+- **Case bản ký tay thủ công:** luồng PAYMENT 3 bước, director duyệt bước cuối kèm `approvedFile` tự upload → chỉ có đúng 1 file `APPROVED` (chính file thủ công, giữ nguyên tên gốc) — xác nhận auto-stamp bị bỏ qua đúng thiết kế.
+- **Case file docx lẫn trong đính kèm:** văn bản có cả `.pdf` và `.docx`, duyệt xong → chỉ `.pdf` được đóng dấu (`kind=APPROVED` mới), `.docx` giữ nguyên `ORIGINAL`, không lỗi.
+- Kiểm tra log backend suốt quá trình test: không có lỗi ẩn nào (`grep -i error` rỗng).
+- Toàn bộ dữ liệu test (4 document, log, attachment, chữ ký test của depthead) đã dọn sạch khỏi DB; dọn luôn toàn bộ `UPLOAD_DIR` (khi dọn xong, bảng `Document` rỗng nên mọi file trong đó chắc chắn là orphan, kể cả vài file tồn dư từ trước session này).
+- Dừng dev server sau khi test; Postgres container vẫn `healthy`.
+
+### Trạng thái
+- Giai đoạn 2 hoàn tất 5/5 mục (2.1, 2.2, 2.3, 2.4, 2.5) — **Giai đoạn 2 XONG TOÀN BỘ**.
+- `ACTION_PLAN.md` đã tick `[x]` cho 2.4, 2.5, kèm ghi chú rõ thay đổi thiết kế (trang bìa riêng thay vì vẽ đè trang 1).
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- Bước tiếp theo: Giai đoạn 3 (Quản trị & tra cứu) theo `ACTION_PLAN.md`, bắt đầu từ mục 3.1 (CRUD Phòng ban).
+
+---
+
+## Bước 19 — Fix bug "backend chạy bản build cũ" + Mục 3.1: CRUD Phòng ban (2026-07-17)
+
+### Bối cảnh
+Người dùng khởi động lại máy/phiên làm việc và báo 4 vấn đề khi test bằng tài khoản admin: (1) không sửa được email chính mình, (2) đổi mật khẩu báo "Không đủ quyền thực hiện thao tác này", (3) không thấy danh sách user, (4) không thêm được bước duyệt khi tạo luồng duyệt mới.
+
+### Nguyên nhân gốc (phát hiện qua điều tra, không phải bug logic)
+Backend được khởi động bằng `npm start` (chạy `node dist/index.js` — bản đã **build sẵn** từ 16/07 lúc 12:02). Bản build này cũ hơn nhiều so với source code hiện tại: thiếu hẳn `workflowsRouter`/`auditRouter`, thiếu `helmet`, và `dist/middlewares/authorize.js` **chưa có nhánh wildcard `*`** (`if (!req.user.role.permissions.includes(permission))` — so khớp chuỗi cứng, không nhận diện quyền `"*"` của role Admin đã thêm ở Bước 12). Vì vậy dù DB đúng (admin có role `Admin` với `permissions:["*"]`) và source code đúng, code **thực thi** vẫn là bản cũ nên chặn nhầm mọi thao tác quản trị của Admin — giải thích cả 3 vấn đề đầu. Vấn đề thứ 4 (không thêm được bước duyệt) cũng cùng nguyên nhân: `dist/index.js` cũ hoàn toàn không mount route `/api/workflows`.
+
+**Cách phát hiện:** so sánh trực tiếp `dist/middlewares/authorize.js` (compiled) với `src/middlewares/authorize.ts` (source, đã có nhánh `permissions.includes("*")` từ Bước 12) bằng `diff` thủ công + kiểm tra timestamp file (`ls -la`) — source mới hơn dist gần 7 tiếng và có nhiều file mới (`workflows.ts`, `audit.ts`, `stamp.ts`...) hoàn toàn không tồn tại trong `dist/`.
+
+### Khắc phục
+- Dừng process `node dist/index.js`, khởi động lại bằng `npm run dev` (`tsx watch src/index.ts`) — chạy trực tiếp trên source, tự reload khi sửa code. Phù hợp cho môi trường đang phát triển/test tích cực; không dùng `npm start`/`dist/` cho tới khi có quy trình build/deploy chính thức.
+- Xác nhận lại bằng `curl` (login admin thật): `GET /api/users` → trả đủ 5 user; `PATCH /api/users/:id` sửa email chính mình → 200; `POST /api/auth/change-password` sai mật khẩu cũ → đúng lỗi nghiệp vụ (không còn 403 quyền); `POST /api/workflows` với 2 bước → tạo đúng kèm đủ `WorkflowStep`, xoá workflow test sau khi xác nhận.
+
+### Mục 3.1 — CRUD Phòng ban (tiếp tục theo `ACTION_PLAN.md` sau khi fix bug trên)
+- **Backend:** `src/routes/departments.ts` (mới) — `router.use(authenticate, authorize("user:manage"))` áp cho cả router (khác `meta.ts` cũ phải né `router.use` vì mount ở tiền tố rộng `/api`; router này mount riêng ở `/api/departments` nên áp chung an toàn). `GET /`, `POST /` (409 nếu trùng tên qua bắt `Prisma.P2002`), `PATCH /:id` (đổi tên, 404 nếu không tồn tại qua `P2025`, 409 nếu trùng tên), `DELETE /:id` (404 qua `P2025`, 409 "Không thể xoá: vẫn còn user thuộc phòng ban này" qua bắt `P2003` — theo đúng mẫu đã dùng ở `workflows.ts` route xoá). Audit dùng chung category `USER` sẵn có (`DEPT_CREATE`/`DEPT_UPDATE`/`DEPT_DELETE`) — không thêm `AuditCategory` riêng, giữ enum gọn.
+  - Xoá route `GET /departments` cũ khỏi `src/routes/meta.ts` (giờ chỉ còn `GET /roles`), mount `departmentsRouter` mới tại `/api/departments` trong `src/index.ts`.
+- **Frontend:** `src/pages/DepartmentListPage.tsx` (mới) — bảng danh sách + `Modal` (dùng `Input` một dòng, không dùng `PromptDialog` vì component đó gắn với `Textarea` nhiều dòng, không hợp tên phòng ban ngắn) cho tạo/sửa, `ConfirmDialog` cho xoá. Route `/departments` trong `App.tsx`; menu "Phòng ban" trong `AppLayout.tsx` (icon `Building2`) đặt cạnh "Quản lý user", dùng chung điều kiện hiển thị `canManageUsers` (quyền `user:manage`) vì backend gate cùng một permission.
+
+### Kết quả kiểm thử (PASS, qua curl thật)
+- `npx tsc --noEmit` sạch cả backend lẫn frontend.
+- Login admin: `GET /api/departments` → đúng 2 phòng ban đã seed.
+- `POST /api/departments {"name":"Phòng Test Debug"}` → 201; tạo trùng tên lần 2 → 409 "Tên phòng ban đã tồn tại".
+- `PATCH` đổi tên → 200 tên mới; `DELETE` phòng ban rỗng (vừa tạo) → 204.
+- `DELETE` phòng ban `"Ban Giám đốc"` (đang có user `admin`, `director`) → 409 "Không thể xoá: vẫn còn user thuộc phòng ban này".
+- Login `staff@example.com` (không có quyền `user:manage`) gọi `GET /api/departments` → 403 — xác nhận RBAC áp đúng.
+
+### Trạng thái
+- Bug "backend chạy bản dist cũ" đã fix bằng cách đổi cách khởi động sang `npm run dev`; **lưu ý vận hành:** nếu sau này có quy trình `npm run build && npm start` (vd. deploy production), phải build lại (`npm run build`) trước mỗi lần start để tránh tái diễn — chưa có script/CI nào tự làm việc này, cần nhớ thủ công hoặc bổ sung sau.
+- `ACTION_PLAN.md` mục 3.1 đã tick `[x]`.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- Bước tiếp theo: mục 3.2 (Tìm kiếm + lọc + phân trang danh sách văn bản) theo `ACTION_PLAN.md`.
+
+---
+
+## Bước 20 — Mục 3.2: Tìm kiếm + lọc + phân trang danh sách văn bản (2026-07-17)
+
+### Đã tạo ra thực tế
+- **`backend/src/lib/dateUtils.ts`:** thêm `dayStartVN(dateStr)`/`dayEndVN(dateStr)` — ghép chuỗi ngày `YYYY-MM-DD` với offset `+07:00` để `Date` parse đúng mốc đầu/cuối ngày theo lịch GMT+7, dùng lọc khoảng ngày tạo văn bản.
+- **`backend/src/routes/documents.ts`:**
+  - Hàm dùng chung `parseListQuery(req, extraWhere)`: đọc `q` (tìm `title` OR `docNo`, `mode:"insensitive"`), `status` (khớp 1 trong `VALID_STATUSES`, giá trị lạ bị bỏ qua thay vì lỗi), `from`/`to` (khoảng `createdAt`), `page`/`limit` (mặc định 20, tối đa 100) — trộn với điều kiện cố định riêng của từng route (`creatorId` hoặc `status:"PENDING"`).
+  - `GET /` (danh sách của tôi): áp `parseListQuery`, phân trang + đếm **thật ở DB** (`prisma.document.count({where})` chạy song song `findMany` qua `Promise.all`).
+  - `GET /pending`: đẩy xuống DB phần lọc thô `workflow.steps.some({approverRole: user.role.name})` để giảm tập ứng viên, nhưng vẫn phải hậu kiểm `isCurrentApprover()` (đúng `currentStep` + ràng buộc cùng phòng ban của `Dept_Head`) trong JS vì Prisma `where` không so sánh được 2 cột khác bảng (`Document.currentStep` với `WorkflowStep.stepOrder`) — `total` của route này vì vậy tính trên mảng đã lọc trong bộ nhớ, không phải `COUNT(*)` DB thật. Giới hạn này đã ghi thành comment ngay trong code, chấp nhận được ở quy mô dữ liệu nội bộ hiện tại.
+- **`frontend/src/types.ts`:** thêm `DocumentListResponse { items, total, page, limit }`.
+- **`frontend/src/pages/DocumentListPage.tsx`:** viết lại state quản lý qua `useSearchParams` (giữ `q`/`status`/`from`/`to`/`page`/`tab` trên URL — share link được, back/forward trình duyệt hoạt động đúng); thêm thanh lọc `list-filters` (ô tìm kiếm icon `Search`, `Select` trạng thái từ `STATUS_LABELS` có sẵn, 2 input `type="date"`); đổi bất kỳ lọc nào (trừ khi tự đổi `page`) reset về trang 1 qua hàm `updateFilter()`; thêm thanh phân trang (Trước/Sau) tái dùng đúng pattern đã có ở `AuditLogPage.tsx`. Empty-state phân biệt "chưa có văn bản nào" (không lọc gì) với "không tìm thấy phù hợp" (đang có bộ lọc).
+- **`frontend/src/pages.css`:** thêm khối `.list-filters*` (ô tìm kiếm có icon lồng bên trong qua `position:relative`+`padding-left`).
+
+### Phát sinh khi code (bug tự phát hiện trước khi test)
+Viết `updateFilter()` ban đầu luôn ép `page=1` vô điều kiện ở cuối hàm — khi nút "Sau"/"Trước" gọi `updateFilter({page: String(page+1)})`, giá trị `page` mới bị chính hàm này ghi đè lại về `"1"` ngay sau đó, làm phân trang không bao giờ chuyển trang được. Sửa: chỉ tự reset `page` về 1 khi `patch` KHÔNG tự chứa key `page` (tức là chỉ khi đổi field lọc khác, không phải khi bấm nút phân trang).
+
+### Kết quả kiểm thử (PASS, qua curl thật — không chỉ đọc code)
+- `tsc --noEmit` sạch cả backend lẫn frontend.
+- Tạo 1 document `GENERAL` thật (`staff@example.com`) → `docNo` cấp đúng `VB-2026-0001`.
+- `GET /api/documents?q=Tim+Kiem` (khớp một phần tiêu đề) → `total:1`; `?q=<docNo đầy đủ>` → `total:1`.
+- `?status=PENDING` → `total:1`; `?status=FOO` (giá trị không hợp lệ) → không lỗi, trả `200` với bộ lọc bị bỏ qua (coi như không lọc status).
+- `?from=<hôm nay>&to=<hôm nay>` (giờ hệ thống, quy đổi lịch GMT+7) → `total:1`; `?from=<ngày mai>` → `total:0` — xác nhận biên ngày tính đúng theo GMT+7, không lệch múi giờ server.
+- `depthead@example.com` gọi `/pending` → thấy đúng document vừa tạo (`total:1`); duyệt (`POST /approve`) → `currentStep` sang `2`, `status` vẫn `PENDING`; gọi lại `/pending` → `total:0` (đã qua bước của mình, đúng thiết kế).
+- `director@example.com` duyệt bước cuối → `status:"APPROVED"`.
+- `staff` lọc lại `?status=APPROVED` → `total:1` — xác nhận danh sách "của tôi" phản ánh đúng trạng thái mới nhất qua bộ lọc.
+- Dọn document test (kèm `DocumentLog` liên quan) khỏi DB bằng `psql` thủ công sau khi test xong — route xoá document không tồn tại theo đúng thiết kế nghiệp vụ (chỉ có `withdraw`, không xoá cứng).
+
+### Trạng thái
+- `ACTION_PLAN.md` mục 3.2 đã tick `[x]`, ghi rõ giới hạn "R09 một phần" (department scoping của Dept_Head vẫn hậu kiểm app layer, chưa đẩy hết xuống DB).
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- Bước tiếp theo: mục 3.3 (Dashboard + xuất Excel) theo `ACTION_PLAN.md`.
+
+---
+
+## Bước 21 — Tự sửa thông tin cá nhân trên trang Tài khoản (2026-07-17)
+
+### Bối cảnh (báo cáo từ người dùng)
+Sau khi fix bug "dist cũ" (Bước 19), người dùng test lại và báo: *"Admin vẫn chưa thể sửa thông tin cá nhân của chính mình."* Điều tra: `PATCH /api/users/:id` cho admin tự sửa **đã hoạt động** (curl trả 200) — admin sửa được qua trang Quản lý user (`/users/:id/edit`). Nhưng nơi tự nhiên nhất để sửa "thông tin cá nhân của chính mình" là trang **"Tài khoản của tôi"** (`/account`), và ở đó card tên đúng là **"Thông tin cá nhân"** lại để **toàn bộ ô ở chế độ read-only** (`disabled`). Đây là khoảng trống thật: không chỉ admin, mà **mọi user** (kể cả Staff — vốn không có quyền `user:manage`) đều không có cách nào tự đổi họ tên/email của mình.
+
+### Quyết định thiết kế
+- Thêm endpoint **self-service** riêng thay vì bắt user đi qua trang quản trị: `PATCH /api/auth/profile` (chỉ cần `authenticate`, không cần `user:manage`) — để Staff cũng tự sửa được hồ sơ của mình.
+- **Chỉ cho tự sửa họ tên + email**; vai trò/phòng ban vẫn khoá (chỉ Admin đổi qua `/api/users/:id`) — tránh user tự nâng quyền/tự chuyển phòng ban. Đây là mở rộng có kiểm soát của mục 1.3 (trước chỉ Admin sửa email người khác; giờ user tự sửa email CỦA CHÍNH MÌNH, có bảo vệ trùng email).
+- Email vẫn là định danh đăng nhập → giữ ràng buộc unique, bắt `P2002` → 409 "Email đã tồn tại" (nhất quán với route users).
+
+### Đã tạo ra thực tế
+- **`backend/src/routes/auth.ts`:** `updateProfileSchema` (zod: `fullName`/`email` đều optional nhưng `.refine()` bắt buộc có ít nhất một trường, email validate định dạng). Route `PATCH /profile` (đặt trước `change-password`): update user hiện tại, audit `USER / PROFILE_UPDATE`, bắt `P2002` → 409. Thêm `import { Prisma }`.
+- **`frontend/src/pages/AccountPage.tsx`:** card "Thông tin cá nhân" từ 4 ô `disabled` → `<form>` có họ tên + email **sửa được** (icon `UserCog`), vai trò/phòng ban vẫn `disabled` kèm hint "Chỉ quản trị viên thay đổi được". Nút "Lưu thay đổi" `disabled` khi chưa có gì đổi (`profileDirty`). Lưu xong gọi `setUser(updated)` cập nhật context ngay (topbar/menu phản ánh tên mới) + toast.
+- **`frontend/src/lib/labels.ts`:** thêm nhãn audit `PROFILE_UPDATE` ("Sửa thông tin cá nhân") + `DEPT_CREATE`/`DEPT_UPDATE`/`DEPT_DELETE` (bổ sung cho mục 3.1 ở Bước 19, trước đó chưa thêm nhãn nên nhật ký hiện mã thô).
+
+### Kết quả kiểm thử (PASS, qua curl thật)
+- `tsc --noEmit` sạch (backend); `npm run build` sạch (frontend, 1818 modules).
+- `PATCH /api/auth/profile` (login admin): sửa riêng `fullName` → 200; sửa riêng `email` → 200; email trùng user khác (`staff@example.com`) → 409 "Email đã tồn tại"; email sai định dạng → 400 "Email không hợp lệ"; body rỗng `{}` → 400 "Không có thông tin nào để cập nhật"; không đăng nhập → 401.
+- Khôi phục `fullName`/`email` admin về giá trị seed gốc sau khi test.
+
+### Trạng thái
+- Bug người dùng báo đã xử lý: trang "Tài khoản của tôi" giờ cho tự sửa họ tên + email (áp dụng cho mọi user, không riêng admin).
+- Không phải một mục đánh số trong `ACTION_PLAN.md` (phát sinh từ phản hồi người dùng) — nhưng bổ khuyết Giai đoạn 1 (Tài khoản cá nhân) một cách hợp lý.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- Bước tiếp theo (theo kế hoạch): mục 3.3 (Dashboard + xuất Excel).
+
+---
+
+## Bước 22 — Mục 3.3: Dashboard + xuất Excel (2026-07-17)
+
+### Đã tạo ra thực tế
+**Cài đặt:** `exceljs` (backend).
+
+**Backend:**
+- `src/lib/dateUtils.ts`: `lastSixMonthsVN()` — trả 6 bucket tháng (cũ→mới) theo lịch GMT+7, mỗi bucket `{label:"YYYY-MM", gte, lt}` (nửa khoảng), ranh giới ghi kèm offset `+07:00` để không lệch múi giờ server.
+- `src/lib/labels.ts` (mới): `statusLabelVN`/`typeLabelVN` — nhãn tiếng Việt phía backend cho file Excel, fallback mã thô nếu không khớp (loại VB do Admin tự đặt tên).
+- `src/routes/dashboard.ts` (mới): `GET /api/dashboard` — `myByStatus` (groupBy status hồ sơ mình tạo, `toStatusMap` chuẩn hoá đủ 6 khoá kể cả 0), `myTotal`, `pendingForMe` (findMany PENDING lọc thô theo `approverRole` ở DB rồi hậu kiểm `isCurrentApprover` như route `/pending`), `monthly` (6 count query theo bucket tháng; Admin đếm toàn hệ thống, user thường lọc `creatorId`). Chỉ Admin (`permissions.includes("*")`) nhận thêm `allByStatus`/`allTotal` (groupBy toàn bộ) + `byDepartment` (count theo `creator.departmentId` từng phòng ban).
+- `src/routes/documents.ts`: route `GET /export` đặt **trước** `/:id` (tránh `:id` nuốt "export"), `authorize("document:read:own")`, dùng lại `parseListQuery(req, {creatorId})` → cùng phạm vi + bộ lọc `q/status/from/to` với GET `/` nhưng không phân trang. Build workbook `exceljs` 7 cột (Số VB/Tiêu đề/Loại/Trạng thái/Người tạo/Ngày tạo/Ngày duyệt cuối), header in đậm, ngày `formatDateTimeVN`, "Ngày duyệt cuối" chỉ điền khi `status==="APPROVED"` (lấy từ log APPROVE mới nhất qua include có `where`). Audit `FILE/EXPORT`. Stream qua `workbook.xlsx.write(res)`.
+- `src/index.ts`: mount `dashboardRouter` tại `/api/dashboard`.
+
+**Frontend:**
+- `types.ts`: `DashboardData`.
+- `api/client.ts`: `apiDownload(path, fallbackFilename)` — fetch với credentials, lỗi thì parse JSON để ném `ApiError`, thành công thì blob→objectURL→anchor.click(), ưu tiên filename từ `Content-Disposition`.
+- `pages/DashboardPage.tsx` (mới): 6 `StatCard` (component nội bộ, có tone màu + clickable điều hướng), biểu đồ cột theo tháng bằng **CSS thuần** (chiều cao bar = tỉ lệ với max, không thêm thư viện chart), khối "Thống kê toàn hệ thống" (badge trạng thái + bảng phòng ban) chỉ render khi `isAdmin`.
+- `pages/DocumentListPage.tsx`: nút "Xuất Excel" (chỉ tab "Của tôi"), `handleExport` ghép query hiện tại rồi gọi `apiDownload`, lỗi hiện toast.
+- `App.tsx`: route `/dashboard`, đổi catch-all redirect `/documents`→`/dashboard`. `LoginPage.tsx`: sau đăng nhập điều hướng `/dashboard`. `AppLayout.tsx`: menu "Tổng quan" (NavLink, icon `LayoutDashboard`) đầu sidebar + `pageTitle` cho `/dashboard`.
+- `lib/labels.ts` (frontend): thêm nhãn audit `EXPORT`, `PROFILE_UPDATE`, `DEPT_CREATE/UPDATE/DELETE` (bổ sung từ Bước 19/21).
+
+### Kết quả kiểm thử (PASS — curl + đăng nhập thật trên trình duyệt)
+- `tsc --noEmit` sạch (backend); `npm run build` sạch (frontend, 1819 modules).
+- **Dashboard qua curl (tạo 3 hồ sơ GENERAL của staff):** Staff → `myByStatus.PENDING=3`, `myTotal=3`, `pendingForMe=0`, monthly tháng hiện tại =3. Dept_Head → `myTotal=0`, `pendingForMe=3`. Admin → `isAdmin=true`, `allTotal=3`, `allByStatus.PENDING=3`, `byDepartment` đúng (Phòng HC-KT:3, Ban GĐ:0).
+- **Export qua curl:** file `.xlsx` parse lại bằng `exceljs` OK — 1 header (in đậm) + N dòng, nhãn tiếng Việt ("Văn bản chung", "Chờ duyệt"), ngày dạng `17/07/2026 07:17 (GMT+7)`; `?q=test 2` → đúng 1 dòng; sau khi duyệt hết 1 hồ sơ → cột "Ngày duyệt cuối" điền đúng cho dòng APPROVED, để trống dòng PENDING.
+- **Trình duyệt thật (admin, 192.168.10.9:5173):** đăng nhập → landing `/dashboard` render đúng toàn bộ (6 stat card, biểu đồ 6 tháng T2/26–T7/26, khối thống kê toàn hệ thống + bảng phòng ban); sidebar có "Tổng quan" + "Phòng ban" mới; trang danh sách văn bản hiện đủ bộ lọc + nút "Xuất Excel"; trang Phòng ban hiện danh sách + Thêm/Sửa/Xoá.
+- Dọn sạch 3 hồ sơ test + file `.xlsx`/cookie tạm sau khi test; DB còn 0 Document, tên admin khôi phục "Quản trị hệ thống".
+
+### Trạng thái
+- **Giai đoạn 3 còn lại mục 3.4** (Backup DB tự động — R15). Mục 3.1/3.2/3.3 đã xong.
+- `ACTION_PLAN.md` mục 3.3 đã tick `[x]`.
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- Bước tiếp theo: mục 3.4 (Backup database tự động) — cân nhắc, hoặc chuyển Giai đoạn 4 tuỳ người dùng.
+
+---
+
+## Bước 23 — Mục 3.4: Backup database tự động (2026-07-17)
+
+### Bối cảnh & khảo sát trước khi làm
+Người dùng yêu cầu lên phương án chi tiết cho 3.4 + Giai đoạn 4 trước khi thực hiện, và chốt quy trình mới: **làm từng task một, dừng chờ phê duyệt giữa các task**. Khảo sát môi trường: `crontab` sẵn có cho user `tung` (không cần sudo, chưa có cron job nào), múi giờ server đã là `Asia/Ho_Chi_Minh` (giờ cron = GMT+7 trực tiếp), `pg_dump 16.14` trong container, đĩa trống 23G. Quyết định phương án: **cron hệ điều hành + shell script**, KHÔNG dùng `node-cron` trong backend — backup phải sống độc lập với app (dev server `tsx watch` restart liên tục, backend chết vẫn phải backup được).
+
+### Đã tạo ra thực tế
+- **`scripts/backup-db.sh`** (trong repo): `docker exec etool-postgres-1 pg_dump -U eapproval -Fc eapproval` — chạy trong container nên không cần mật khẩu (local socket trust), `-Fc` nén sẵn + restore chọn lọc được. Dump ghi vào `<file>.tmp` rồi mới `mv` sang tên thật — nếu pg_dump chết giữa chừng thì không để lại file dump cụt trông-như-lành. Xoay vòng: sort theo tên file (chứa timestamp) + `head -n -7` xoá bản cũ, giữ 7 bản. Mọi kết quả (OK/FAIL/DEL) ghi `backup.log` kèm timestamp GMT+7.
+- **Crontab** (user `tung`): `0 2 * * * /home/tung/etool/scripts/backup-db.sh` — 02:00 hằng ngày giờ GMT+7.
+- **`scripts/RESTORE.md`**: quy trình khôi phục 5 bước (dừng backend → chọn dump → restore THỬ vào DB tạm → restore thật với `--clean --if-exists --no-owner` → khởi động lại), lệnh backup thủ công, lưu ý khi chuyển server (cài lại cron, copy thư mục backup), và **quy tắc an toàn migrate schema** rút từ sự cố 2026-07-16: backup thủ công trước mọi migrate + `prisma migrate dev --create-only` để xem SQL trước + áp bằng `migrate deploy` (không bao giờ reset DB).
+- Thư mục backup: `/home/tung/etool-backups/` — ngoài repo, ngoài docker volume.
+
+### Kết quả kiểm thử (PASS, toàn bộ chạy thật)
+- Chạy script tay → exit 0, dump 28K, log ghi `OK ... (28K)`.
+- **Restore thật vào DB tạm** `eapproval_restore_test` (createdb → `pg_restore --no-owner` từ stdin → so sánh): đủ **12 bảng** khớp DB gốc, **5 user, 3 workflow** đúng dữ liệu; drop DB tạm sau khi xác nhận.
+- Test xoay vòng: tạo 8 file dump giả (timestamp cũ) + 2 dump thật = 10 file → chạy script → còn **đúng 7 bản mới nhất**, 3 bản cũ nhất bị xoá, log ghi từng dòng `DEL`. Dọn file giả (size 0) sau khi test.
+- `crontab -l` xác nhận entry đã cài.
+
+### Trạng thái
+- **Giai đoạn 3 hoàn tất toàn bộ (3.1 → 3.4).**
+- `ACTION_PLAN.md` mục 3.4 đã tick `[x]`.
+- Lưu ý vận hành: cron là cấu hình theo máy — chuyển server phải cài lại (đã ghi trong RESTORE.md).
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- **DỪNG CHỜ PHÊ DUYỆT** theo quy trình mới trước khi làm tiếp Giai đoạn 4 (4.1 Uỷ quyền duyệt → 4.2 Nhắc hạn hồ sơ).
+
+---
+
+## Bước 24 — Mục 4.1: Uỷ quyền duyệt (delegation) + vá lỗ hổng backup file (2026-07-17)
+
+### Phần A — Vá backup (phát sinh từ câu hỏi của người dùng giữa chừng)
+Người dùng hỏi: *"database có lưu file không? restore có ảnh hưởng file không?"* — câu trả lời: **DB không lưu file**, chỉ lưu metadata (`Attachment.fileUrl` trỏ tên file trong `backend/uploads/`); `pg_dump` vì vậy KHÔNG bao gồm file đính kèm/chữ ký → lỗ hổng backup thật. Đã vá ngay trong `scripts/backup-db.sh`: mỗi lần backup sinh thêm `uploads-<timestamp>.tar.gz` (tar toàn bộ `backend/uploads/`, cùng cơ chế .tmp-rồi-rename + xoay vòng 7 bản như dump). `RESTORE.md` nâng lên quy trình 6 bước — bước 5 mới: giải nén tar uploads CÙNG timestamp với bản dump (nếu bỏ qua, bản ghi Attachment có thể trỏ tới file không tồn tại; route download đã xử lý mềm — 404 "File không còn tồn tại trên máy chủ", không sập). Đã chạy thật: cả 2 file sinh ra đúng, log ghi 2 dòng OK.
+
+### Phần B — Mục 4.1 Uỷ quyền duyệt
+
+**Migration (theo đúng quy trình an toàn mới của RESTORE.md):** backup thủ công trước → `prisma migrate dev --create-only --name add_delegation` → đọc `migration.sql` xác nhận chỉ có CREATE TABLE/INDEX/FK (không DROP) → `prisma migrate deploy` + `prisma generate`. Model `Delegation` + index `(toUserId, startDate, endDate)` cho query "ai đang uỷ quyền cho tôi".
+
+**Backend:**
+- `lib/workflow.ts` (viết lại có chủ đích): tách `matchesCurrentStep(document, approver)` làm logic lõi — khi duyệt thay, "approver" là NGƯỜI UỶ QUYỀN nên ràng buộc Dept_Head-cùng-phòng-ban tính theo phòng ban người uỷ quyền, không phải người nhận. `getActiveDelegators(userId)` (async, lọc `startDate <= now <= endDate` + `fromUser.isActive` — user bị khoá thì uỷ quyền treo theo). `isCurrentApprover(doc, user, delegators=[])` giữ nguyên chữ ký cũ (tham số 3 optional → các call site cũ không vỡ). `findActingDelegator` ưu tiên quyền bản thân trước (duyệt bằng quyền riêng thì không tính là duyệt thay). `canViewDocument` nhận delegators tương tự.
+- `routes/delegations.ts` (mới, mount `/api/delegations`): GET `/` (uỷ quyền tôi cấp + tôi nhận; Admin `?all=1`), GET `/candidates` (user active trừ mình — user thường không có quyền gọi `/api/users` nên cần route riêng cho ô chọn), POST `/` (zod validate ngày dạng YYYY-MM-DD → `dayStartVN`/`dayEndVN`; chặn: tự uỷ quyền 400, ngày ngược 400, khoảng đã trôi qua 400, người nhận không tồn tại/bị khoá 400, chồng lấn khoảng ngày của cùng fromUser 409), DELETE `/:id` (chỉ fromUser hoặc Admin 403). Audit `USER / DELEGATION_CREATE|DELEGATION_DELETE`.
+- `routes/documents.ts`: mọi điểm gọi `isCurrentApprover`/`canViewDocument` phía người-duyệt nạp `getActiveDelegators` và truyền vào (GET /, /pending, /:id, download, approve, reject, request-change, comments). **Điểm dễ sót nhất (đã lường trước từ khâu lên phương án):** lọc thô ở DB của `/pending` đổi từ `approverRole: role.name` thành `approverRole: { in: [role mình + role các người uỷ quyền] }` — nếu quên, hồ sơ chỉ-duyệt-được-qua-uỷ-quyền bị loại từ vòng DB, hậu kiểm không bao giờ thấy. Tương tự cho `pendingForMe` trong `routes/dashboard.ts`. Approve/reject/request-change: nếu `findActingDelegator` khác null → nối "(duyệt thay — uỷ quyền bởi X)" vào comment của DocumentLog. `GET /:id` trả thêm `approvingVia: string|null` cho banner.
+
+**Frontend:**
+- `types.ts`: `Delegation`, `DelegationUser`, `DocumentDetail.approvingVia`.
+- `lib/formatDate.ts`: thêm `formatDate` (chỉ ngày, GMT+7).
+- `AccountPage.tsx`: card "Uỷ quyền duyệt" — bảng uỷ quyền liên quan đến mình ("Bạn → X" / "X → Bạn", khoảng ngày, badge Đang hiệu lực/Sắp hiệu lực/Đã hết hạn tính client-side, nút Thu hồi chỉ cho uỷ quyền mình cấp + ConfirmDialog), form tạo (select candidates + 2 input date).
+- `DocumentDetailPage.tsx`: banner `Alert tone="info"` khi `approvingVia` — "Bạn đang xem/duyệt hồ sơ này theo uỷ quyền của X".
+- `labels.ts`: nhãn audit `DELEGATION_CREATE`/`DELEGATION_DELETE`.
+
+### Kết quả kiểm thử (PASS — curl đủ case + UI trình duyệt thật end-to-end)
+- `tsc --noEmit` sạch backend + frontend; `npm run build` frontend sạch.
+- **Curl:** accountant `/pending` trước uỷ quyền → 0; depthead tạo uỷ quyền cho accountant (hôm nay) → accountant thấy 1 hồ sơ GENERAL đang ở bước Dept_Head, `canApprove:true`, `approvingVia:"Trần Thị Trưởng Phòng"`; duyệt → log đúng "(duyệt thay — uỷ quyền bởi ...)", sang bước 2. Validation: tự uỷ quyền 400, chồng lấn 409 (kèm tên người nhận trong message), ngày ngược 400, accountant thu hồi uỷ quyền của depthead 403, depthead thu hồi 204 → hồ sơ mới tạo sau đó KHÔNG hiện trong pending của accountant nữa.
+- **UI trình duyệt thật (192.168.10.9:5173):** login depthead → trang Tài khoản hiện card Uỷ quyền duyệt → tạo uỷ quyền cho "Phạm Thị Kế Toán" (17→18/7) qua form → bảng hiện dòng mới badge "Đang hiệu lực" + toast; logout → login accountant → tab "Chờ tôi duyệt" hiện văn bản → mở chi tiết thấy banner uỷ quyền → bấm Duyệt → timeline ghi "Phạm Thị Kế Toán — Duyệt — (duyệt thay — uỷ quyền bởi Trần Thị Trưởng Phòng)", stepper sang 2/2, banner biến mất (hết là approver bước hiện tại). (Ghi chú kỹ thuật phiên test: screenshot CDP thỉnh thoảng timeout trên tab này, chuyển sang xác minh bằng `get_page_text`/`read_page` — không ảnh hưởng kết quả.)
+- Dọn sạch: document test + delegation + cookie jar; DB còn 0 Document, 0 Delegation.
+
+### Trạng thái
+- `ACTION_PLAN.md` mục 4.1 đã tick `[x]`. Còn lại duy nhất mục 4.2 (Nhắc hạn hồ sơ PENDING quá hạn).
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+- **DỪNG CHỜ PHÊ DUYỆT** trước khi làm 4.2.
+
+---
+
+## Bước 25 — Mục 4.2: Nhắc hạn hồ sơ PENDING quá hạn (2026-07-17)
+
+### Khảo sát & quyết định thiết kế
+Người dùng yêu cầu tiếp tục mục 4.2. Hạ tầng thông báo đã có đủ từ trước: `lib/notifications.ts` (`notify()` gộp WS + Web Push), `lib/ws.ts`, `lib/push.ts` — job chỉ cần tìm đúng hồ sơ, đúng người rồi gọi `notify()`. Hai quyết định quan trọng lường trước từ khâu đọc code:
+1. **Bẫy `@updatedAt` của Prisma:** tiêu chí quá hạn dựa trên `updatedAt`, nhưng ghi `lastRemindedAt` bằng update thông thường sẽ làm Prisma tự bump `updatedAt` → mỗi lần nhắc là reset đồng hồ, hồ sơ chỉ được nhắc mỗi N ngày thay vì mỗi ngày (trái ý "tối đa 1 lần/ngày" — ngụ ý nhắc lại hằng ngày). Xử lý: set tường minh `updatedAt: document.updatedAt` trong data (Prisma cho phép override `@updatedAt`), kèm guard `where: { id, updatedAt }` (updateMany) — nếu hồ sơ vừa có người xử lý giữa lúc job chạy thì bỏ qua, không ghi đè ngược `updatedAt` mới.
+2. **Uỷ quyền (4.1) phải ăn vào nhắc hạn:** hồ sơ tồn đọng thường chính là vì người duyệt vắng mặt — nhắc mà chỉ tới người vắng là vô nghĩa. Người đang nhận uỷ quyền hiệu lực từ approver ứng viên cũng nhận nhắc.
+
+### Đã làm thực tế
+- **Migration `20260717010144_add_document_last_reminded_at`:** cột `Document.lastRemindedAt DateTime?` — theo đúng quy trình an toàn (backup thủ công qua `scripts/backup-db.sh` → `--create-only` → đọc SQL xác nhận chỉ 1 lệnh ADD COLUMN → `migrate deploy` + `generate`).
+- **`lib/reminder.ts` (mới):** `remindOverduePendingDocuments()` — query PENDING có `updatedAt < now - N ngày` AND (`lastRemindedAt` null hoặc < 00:00 hôm nay GMT+7); với mỗi hồ sơ: `getCurrentStepApproverIds()` → `notify()` event `{type:"document:reminder", documentId, title, actorName:"Nhắc hạn"}` → ghi `lastRemindedAt` (giữ nguyên `updatedAt` như trên). Bỏ qua (không đánh dấu đã nhắc) hồ sơ không có bước workflow khớp — dữ liệu lỗi. `initReminderJob()` — `node-cron` v4 (types bundled), lịch `REMIND_CRON` (mặc định `0 8 * * *`, `cron.validate` sai thì warn + fallback), `timezone: "Asia/Ho_Chi_Minh"`, callback bọc try/catch chỉ log lỗi. Gọi từ `index.ts` sau `initWebSocket`.
+- **`lib/notifications.ts`:** tách helper `getCurrentStepApproverIds(document)` — approver ứng viên bước hiện tại (đúng role, Dept_Head cùng phòng ban người tạo, thêm điều kiện `isActive:true`) + người nhận uỷ quyền đang hiệu lực từ họ (`toUser.isActive`). `getNotifiableUserIds` chuyển sang dùng helper này → thông báo tạo/duyệt/từ chối... giờ cũng tới người nhận uỷ quyền (trước đây sót — hệ quả tự nhiên của 4.1).
+- **`lib/dateUtils.ts`:** thêm `todayVN()` (Intl en-CA → "YYYY-MM-DD" theo GMT+7, ghép được với `dayStartVN`).
+- **Env:** `REMIND_PENDING_AFTER_DAYS` (mặc định 3; 0 = nhắc mọi PENDING — dùng khi dev; giá trị âm/không phải số → warn + mặc định), `REMIND_CRON` — cả hai ghi vào `backend/.env.example` kèm chú thích.
+- **Frontend:** chỉ thêm `document:reminder` vào `EVENT_LABELS` ("văn bản chờ duyệt đã quá hạn") + `EVENT_TONES` (orange) trong `lib/labels.ts` — toast (DocumentListPage/DetailPage) và service worker dùng chung đường ống sẵn có, không sửa gì thêm.
+- Cài `node-cron@4.6.0` (backend).
+
+### Kết quả kiểm thử (PASS — luồng thật end-to-end, N=0 + `REMIND_CRON="* * * * *"` tạm trong dev)
+- `tsc --noEmit` backend sạch; `npm run build` frontend sạch.
+- Dựng bộ nghiệm thu thật: staff tạo văn bản GENERAL (PENDING bước 1 — Dept_Head); depthead uỷ quyền accountant (qua API thật); 2 WS client thật (node + cookie đăng nhập của từng người); Web Push trỏ vào **push-service giả chạy HTTPS tự ký** trên localhost:9999 (web-push luôn gửi TLS — sink HTTP thuần bị lỗi EPROTO; backend dev được khởi động lại với `NODE_EXTRA_CA_CERTS` trỏ cert của sink — chỉ THÊM cert tin cậy, không tắt xác thực TLS; classifier môi trường đã chặn phương án `NODE_TLS_REJECT_UNAUTHORIZED=0` và phương án thay thế này đúng là an toàn hơn).
+- **Tick cron 08:14:00 GMT+7:** cả depthead LẪN accountant (người nhận uỷ quyền) nhận WS event đúng payload `document:reminder` + đúng documentId/title; sink nhận đúng 1 POST push mã hoá (242 bytes, TTL 2419200) trả 201; log backend ghi "Đã nhắc 1 hồ sơ".
+- **`updatedAt` bất biến:** trước/sau khi nhắc vẫn `01:05:38.789` (thời điểm tạo) — bẫy `@updatedAt` đã xử lý đúng; `lastRemindedAt` = thời điểm tick.
+- **Chống nhắc trùng trong ngày:** tick kế tiếp (08:15) không sinh thêm gì — đếm log/sink/WS đều giữ nguyên.
+- **Đúng ngữ nghĩa 1 lần/NGÀY:** set `lastRemindedAt` = hôm qua (psql) → tick sau nhắc lại bình thường.
+- Dọn sạch: document test, delegation, PushSubscription giả, cookie jar, cert/key sink, env tạm gỡ khỏi `backend/.env`; backend khởi động lại bình thường, job nhận đúng lịch mặc định `"0 8 * * *"`; DB còn 0 Document / 0 Delegation / 0 PushSubscription; xác nhận chỉ 1 instance backend chạy.
+
+### Ghi chú vận hành
+- Nhắc hạn qua đúng 2 kênh WS + Web Push như spec (KHÔNG email). Web Push tới trình duyệt thật vẫn chịu giới hạn hạ tầng cũ của Bước 8 (cần HTTPS hoặc localhost để đăng ký subscription) — phần backend đã kiểm chứng trọn vẹn bằng push-service giả.
+- Job KHÔNG ghi audit log (hành động hệ thống, không có actor/request) — nhất quán với thiết kế audit hiện tại.
+
+### Trạng thái
+- **`ACTION_PLAN.md` mục 4.2 đã tick `[x]` — TOÀN BỘ 4 GIAI ĐOẠN CỦA ACTION_PLAN ĐÃ HOÀN THÀNH.**
+- Chưa commit gì lên git — chờ người dùng yêu cầu.
+
+---
+
+## Bước 26 — Cập nhật EXISTING-BUG.md theo hiện trạng thật (2026-07-17)
+
+Người dùng yêu cầu cập nhật bảng `EXISTING-BUG.md` (đã lỗi thời — nhiều mục fix rồi vẫn ghi ❌). Trước khi sửa đã **xác minh lại từng mục trực tiếp trên code** (đúng quy tắc ghi ở đầu file đó):
+- Chuyển sang ✅ (kèm nơi fix + ngày): R09 (một phần, mục 3.2 — giới hạn hậu kiểm app-layer ghi trong code), R10 (3.2), R11 (GĐ1, `isActive`), R13 (Bước 12, audit `USER_*`), R15 (3.4 + Bước 24A).
+- **R20 đánh giá lại — rủi ro không còn bằng 0:** từ Bước 11 đã có Workflow Builder, `PATCH /api/workflows/:id` thay toàn bộ steps (`deleteMany`+`createMany`) không guard hồ sơ PENDING (DELETE thì FK đã chặn → 409). Nâng P3 → P2, ghi kèm hướng fix đề xuất (đếm PENDING theo `workflowId` → 409 khi sửa `steps`).
+- Bảng tóm tắt tách 2 phần "Còn mở" (R06, R12, R14, R16, R17, R18, R19, R20) / "Đã fix", thêm cảnh báo: mọi fix trừ R08 **chưa commit** (HEAD vẫn `82682f5`), repo chưa có remote — commit là việc tồn đọng ưu tiên cao nhất.
+- Chỉ sửa tài liệu, không đổi code — không cần test.
+
+---
+
+## Bước 27 — Nút hiện/ẩn mật khẩu trang đăng nhập + giải đáp về vòng đời phiên (2026-07-17)
+
+Người dùng hỏi 2 câu về phiên đăng nhập + yêu cầu thêm nút show password ở trang đăng nhập.
+
+**Giải đáp (xác minh trực tiếp trên code):**
+- Hệ thống KHÔNG có idle-timeout — phiên là JWT hạn **8h cố định kể từ lúc đăng nhập** (`JWT_EXPIRES_IN=8h`, cookie `maxAge` 8h khớp nhau trong `routes/auth.ts`). Hết 8h: gọi API trả 401 (frontend chưa có interceptor tự đá về login — chỉ khi F5 thì `/me` fail → về trang đăng nhập).
+- Cookie là **persistent cookie** (có maxAge) → tắt hẳn trình duyệt mở lại trong vòng 8h vẫn tự đăng nhập; quá 8h phải đăng nhập lại.
+
+**Bổ sung cùng ngày — nâng phiên đăng nhập 8h → 10h theo yêu cầu:** đổi đồng bộ cả 3 nơi (nếu chỉ đổi cookie thì token vẫn chết ở giờ thứ 8, 2 tiếng cuối toàn 401): `COOKIE_MAX_AGE_MS` trong `routes/auth.ts` (10h), default `JWT_EXPIRES_IN` trong `lib/jwt.ts` ("10h"), `JWT_EXPIRES_IN` trong `backend/.env` + `.env.example` ("10h"). Nghiệm thu bằng login thật: `Set-Cookie ... Max-Age=36000` và decode JWT `exp - iat = 36000s = 10h` (lưu ý phải restart backend lần 2 vì tsx restart lần đầu chạy trước khi `.env` kịp sửa — token phát ra vẫn 8h, đã bắt được nhờ decode kiểm tra thật).
+
+**Đã làm (nút show password):**
+- `LoginPage.tsx`: state `showPassword`, nút `type="button"` class `input-icon__toggle` trong wrapper `.input-icon--toggle`, icon `Eye`/`EyeOff` (lucide), `aria-label`/`title` "Hiện/Ẩn mật khẩu", đổi `type` input `password`↔`text`.
+- `ui.css`: `.input-icon--toggle > .input` thêm `padding-right: 38px`; `.input-icon__toggle` absolute mép phải (icon nằm TRONG button nên không dính rule `.input-icon > svg` absolute-left có sẵn).
+- **Nghiệm thu (trình duyệt thật 192.168.10.9:5173):** `npm run build` sạch; gõ mật khẩu → mặc định chấm ẩn + icon Eye; click → hiện rõ chữ + icon EyeOff (screenshot xác nhận); click lần 2 → ẩn lại (kiểm cả bằng JS đọc `input.type` đổi password↔text↔password và bằng click chuột thật).
+
+Chưa commit — chờ người dùng yêu cầu.
+
+---
+
+## Bước 28 — Nhập vai Staff + Trưởng phòng chạy thử hệ thống, đánh giá tồn đọng (2026-07-17)
+
+Người dùng yêu cầu đóng vai người dùng thường (staff) và trưởng phòng (depthead), chạy thử qua trình duyệt thật và đánh giá vấn đề tồn đọng. **Chỉ đánh giá, không sửa gì.**
+
+### Luồng đã chạy thật (UI trình duyệt 192.168.10.9:5173, một vòng đời hồ sơ trọn vẹn)
+Staff: login → dashboard → tạo văn bản PURCHASE "Đề xuất mua máy in..." (kèm PDF + formData JSON) → xem chi tiết VB-2026-0009 → bình luận → xem trang Tài khoản. Depthead: login → dashboard (Chờ tôi duyệt: 1 đúng) → mở hồ sơ → **Yêu cầu chỉnh sửa** (modal + lý do). Staff: **Chỉnh sửa** (đổi tiêu đề, panel sửa đầy đủ tiêu đề/JSON/xoá-thêm file) → **Nộp lại**. Depthead: **Duyệt** → hồ sơ sang bước 2/2 (Giám đốc), hàng chờ về 0. Timeline ghi đủ mọi bước, đúng giờ GMT+7. Dọn sạch: xoá document test + file uploads vật lý; DB về 0 Document.
+(Ghi chú env: click chuột mô phỏng không ăn trên tab này — vấn đề CDP dispatch đã biết từ Bước 24, phải click/submit qua JS; screenshot CDP timeout — dùng get_page_text/read_page. Không phải bug app. Gắn file test qua DragEvent+DataTransfer vì file_upload MCP bị giới hạn file-shared và React onChange không bắt event change tổng hợp trên input file.)
+
+### Phát hiện (đã xác minh chéo trong code, xếp theo mức độ)
+1. **[UX/an toàn — đáng làm nhất] Nút "Duyệt" không có xác nhận**: `onClick={approve}` gọi thẳng (`DocumentDetailPage.tsx:497`) — 1 click nhầm là duyệt luôn, không nhập được ý kiến kèm duyệt. Trong khi Từ chối/Yêu cầu chỉnh sửa/Thu hồi đều có modal. Đề xuất: ConfirmDialog + ô ý kiến tuỳ chọn.
+2. **[Chức năng] `formData` không hiển thị ở trang chi tiết**: nhập soLuong/donGia/nhaCungCap lúc tạo nhưng người duyệt KHÔNG thấy ở đâu — mất thông tin ra quyết định. Fix nhanh được ngay cả khi chưa làm R14: render bảng key-value từ JSON.
+3. **[UX] Ô nhập "Dữ liệu form (JSON — nâng cao)"**: bắt người dùng thường gõ JSON thô — chính là R14 (form động theo loại văn bản), xác nhận qua trải nghiệm thật là rào cản.
+4. **[Chức năng] Không có hộp thông báo trong app**: WS toast chỉ hiện nếu đang mở tab đúng lúc; Web Push chưa chạy được trên HTTP LAN (kẹt R06). Trưởng phòng offline lúc có hồ sơ mới là lỡ — phải tự vào tab Chờ tôi duyệt. Đề xuất: bảng Notification persist trong DB + icon chuông có badge.
+5. **[UI nhỏ] Sidebar hiện role thô** `user?.role.name` ("Dept_Head") tại `AppLayout.tsx:232,243` — `roleLabel()` có sẵn trong `labels.ts` mà không dùng.
+6. **[UX nhỏ] Card "Uỷ quyền duyệt" + "Chữ ký mẫu" hiện cả với Staff** — role không duyệt gì nên uỷ quyền/chữ ký của staff vô nghĩa về nghiệp vụ, gây bối rối.
+7. **[UX nhỏ] 4/6 stat card dashboard không click được** (Đã duyệt/Đang chờ/Cần sửa/Bị từ chối) dù danh sách có sẵn filter `?status=` tương ứng.
+8. **[Nhỏ] Toast "Đã xử lý thành công" chung chung** cho nộp lại (nên "Đã nộp lại văn bản").
+
+### Điểm chạy tốt (ghi nhận để khỏi sửa nhầm)
+Phân quyền hiển thị đúng theo vai (staff không thấy nút duyệt, depthead thấy đủ 3 nút); vòng đời YCS→sửa→nộp lại→duyệt khép kín, log đầy đủ; cấp số VB đúng; panel chỉnh sửa khi bị YCS đầy đủ (tiêu đề/JSON/file); đếm hàng chờ realtime đúng ở dashboard + tab; magic bytes filter hoạt động; empty states có mặt.
+
+### Trạng thái
+- Không sửa code trong bước này. Các finding chờ người dùng chọn mục để làm.
+- Chưa commit gì — chờ người dùng yêu cầu.
+
+---
+
+## Bước 29 — Xử lý finding 1, 2, 4, 5, 6, 7, 8 của Bước 28 + cập nhật EXISTING-BUG (2026-07-17)
+
+Người dùng yêu cầu: đưa finding Bước 28 vào danh sách lỗi và xử lý mục 1, 2, 4, 5, 6, 7, 8 (mục 3 = R14, vẫn mở chờ spec). `EXISTING-BUG.md` thêm **NHÓM 5 (R21–R27)** — tất cả fix xong trong bước này.
+
+### Đã làm
+- **R21 — Xác nhận khi Duyệt:** `Modal.tsx` mở rộng `PromptDialog` (`optional` — cho gửi khi bỏ trống, `message` — mô tả hệ quả, tone `success`). `DocumentDetailPage`: bấm Duyệt mở modal (ghi rõ "bước cuối → Đã duyệt" hay "chuyển bước tiếp theo", kèm tên bản đã ký nếu chọn) + ô "Ý kiến (tuỳ chọn)"; `approve(comment?)` gửi comment ở cả 2 dạng body (JSON/multipart) — backend vốn nhận sẵn `commentOptionalSchema`, không phải sửa.
+- **R22 — Hiển thị formData:** card "Dữ liệu form" (bảng key–value, số format `vi-VN`, object stringify) trên trang chi tiết, chỉ hiện khi có nội dung.
+- **R23 — Hộp thông báo:** migration `20260717063250_add_notification` (backup trước, `--create-only`, soát SQL chỉ CREATE, `deploy`) — model `Notification(userId, type, documentId?, title, actorName?, isRead, createdAt)` cascade theo User/Document, 2 index theo `(userId, isRead)`/`(userId, createdAt)`. `notify()` thành 3 kênh: **ghi DB trước** rồi WS + Push (client nhận WS refetch phải thấy bản ghi; lỗi ghi DB không chặn 2 kênh kia). `routes/notifications.ts`: GET `/` (30 mới nhất + unreadCount), POST `/read-all`. Frontend: chuông topbar (thay chuông push cũ — bật push vẫn còn trong user menu) + badge đỏ số chưa đọc (99+), panel dropdown (item chưa đọc nền `--primary-subtle`, click → điều hướng hồ sơ, mở panel → read-all + tắt badge), refetch theo WS event qua `useWebSocket` trong `AppLayout`. CSS khối `.notif__*` trong `layout.css`.
+- **R24:** `AppLayout` dùng `roleLabel()` ở 2 chỗ hiện role.
+- **R25:** helper `canApproveAnything()` (permissions.ts). Card Uỷ quyền + Chữ ký hiện khi `isApprover || delegations.length > 0` — **chủ ý giữ cho Staff nhận uỷ quyền**: họ cần thấy bảng uỷ quyền và cần upload chữ ký (duyệt thay thì chữ ký người duyệt thay được đóng vào PDF — xem stamp 2.5). Form "Tạo uỷ quyền" chỉ hiện với approver; candidates chỉ fetch khi cần. Subtitle trang đổi theo ngữ cảnh.
+- **R26:** 4 stat card còn lại điều hướng `/documents?status=APPROVED|PENDING|CHANGES_REQUESTED|REJECTED`.
+- **R27:** toast theo hành động (Đã duyệt/Đã từ chối/Đã gửi yêu cầu chỉnh sửa/Đã nộp lại văn bản).
+
+### Nghiệm thu (PASS — trình duyệt thật, trọn vòng đời PAYMENT 3 bước)
+- `tsc --noEmit` backend sạch; `npm run build` frontend sạch; curl endpoint mới trả `{"items":[],"unreadCount":0}`.
+- Staff login: sidebar hiện "Nhân viên" (R24); trang Tài khoản KHÔNG còn 2 card (R25); tạo văn bản PAYMENT kèm formData → trang chi tiết hiện bảng "Dữ liệu form" đúng, `soTien` format `12.500.000` (R22).
+- Depthead login: **chuông badge "1"** → mở panel thấy "Nguyễn Văn Staff đã tạo văn bản: Đề xuất thanh toán tiền điện Q3" + đúng giờ, badge tắt sau khi mở (read-all), click item điều hướng đúng hồ sơ (R23). Bấm Duyệt → **modal hiện, hồ sơ vẫn Bước 1/3** (không duyệt oan), nhập ý kiến → xác nhận → sang Bước 2/3, toast "Đã duyệt văn bản" (R27), ý kiến hiện trong timeline (R21). Dashboard: card "Đã duyệt" có `is-clickable`, click → `/documents?status=APPROVED` (R26).
+- Dọn sạch: xoá document test (Notification cascade theo — bảng về 0), cookie jar; DB 0 Document / 0 Notification.
+
+### Trạng thái
+- `EXISTING-BUG.md`: R21–R27 đã ghi + tick fix, bảng tóm tắt cập nhật. Còn mở: R06, R12, R14, R16, R17, R18, R19, R20.
+- Chưa commit gì — chờ người dùng yêu cầu.
+
+---
+
+## Bước 30 — Đổi tên đăng nhập từ email sang username (2026-07-18)
+
+Bối cảnh: đêm trước người dùng tự đổi email tài khoản Admin qua trang Tài khoản → bị khoá ngoài (email chính là tên đăng nhập), phải khôi phục bằng SQL tay (backup trước, reset về `admin@example.com` + mật khẩu mặc định + `mustChangePassword=true`; người dùng đã đăng nhập lại và tự đổi mật khẩu — xác nhận qua audit `PASSWORD_CHANGE`). Người dùng sau đó yêu cầu: **thay tên đăng nhập từ email bằng username**.
+
+### Quyết định thiết kế (rút từ chính sự cố)
+- `username` là tên đăng nhập duy nhất (unique, chữ thường, regex `[a-z0-9][a-z0-9._-]{2,31}`), **user KHÔNG tự đổi được** — chỉ Admin đổi qua trang Quản lý user. Email hạ cấp thành **thông tin liên hệ thuần** (vẫn unique, user tự đổi thoải mái, không còn rủi ro tự khoá).
+- Login normalize lowercase (`STAFF` → `staff` vào được).
+
+### Migration `20260718025700_add_user_username` — VIẾT TAY
+`prisma migrate dev --create-only` từ chối chạy (cột NOT NULL trên bảng có 5 dòng + môi trường non-interactive) → tự soạn SQL theo trình tự an toàn: ADD COLUMN nullable → backfill `split_part(email,'@',1)` (đã kiểm không trùng) → SET NOT NULL → CREATE UNIQUE INDEX. Backup trước khi áp; `migrate deploy` + `migrate status` xác nhận đồng bộ. Username sau backfill: `staff/depthead/director/accountant/admin`.
+
+### Backend
+- `auth.ts`: `loginSchema {username, password}` (trim + toLowerCase), tìm `findUnique({where:{username}})`, message lỗi đổi "Tên đăng nhập hoặc mật khẩu..."; audit LOGIN_FAILED ghi username vào cột `actorEmail` (ngữ nghĩa cột giờ là "định danh đăng nhập được nhập" — ghi chú trong code). `updateProfileSchema` giữ fullName + email (email giờ vô hại), KHÔNG nhận username.
+- `users.ts`: `usernameSchema` dùng chung create/update; `SAFE_USER_SELECT` + username; P2002 phân biệt cột qua `err.meta.target` → "Tên đăng nhập đã tồn tại" vs "Email đã tồn tại"; audit USER_CREATE detail = username.
+- `seed.ts`: USERS thêm username, upsert cả create lẫn update.
+
+### Frontend
+- `LoginPage`: field "Tên đăng nhập" (icon UserCircle, `autocomplete="username"`); `AuthContext.login(username, password)`.
+- `UserFormPage`: field "Tên đăng nhập" (hint quy tắc + "User không tự đổi được", pattern HTML, tự lowercase khi gõ) + "Email liên hệ".
+- `UserListPage`: thêm cột "Tên đăng nhập" (mono), đổi nhãn "Email liên hệ".
+- `AccountPage`: "Tên đăng nhập" disabled (hint "Chỉ quản trị viên thay đổi được"), "Email liên hệ" hint "KHÔNG dùng để đăng nhập".
+- `types.ts`: `User.username`.
+
+### Nghiệm thu (PASS — curl + UI trình duyệt thật)
+- `tsc` + build sạch. Curl: login `staff` → 200; body kiểu cũ `{email...}` → 400; `STAFF` hoa → 200 normalize đúng.
+- Admin flows (qua admin tạm `tmpadmin` tạo bằng SQL vì không biết mật khẩu admin thật — đúng ra không được biết): POST user `nv.test` → 201 + mustChangePassword true, login user mới OK; trùng username → 409 đúng message; username 2 ký tự → 400 đúng message validate.
+- UI: form login hiện "Tên đăng nhập", login `tmpadmin` qua form thật → vào dashboard; trang Quản lý user hiện cột username; form sửa user có field username; trang Tài khoản: username disabled + hint đúng, email ghi rõ không dùng đăng nhập.
+- Dọn sạch: xoá `tmpadmin` + `nv.test` (audit rows giữ nguyên, actorId tự SET NULL), cookie jar; DB còn đúng 5 user seed.
+
+### Trạng thái
+- **Đăng nhập từ giờ**: `admin` / `staff` / `depthead` / `director` / `accountant` (mật khẩu không đổi).
+- Chưa commit gì — chờ người dùng yêu cầu.

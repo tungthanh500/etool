@@ -3,3 +3,8 @@
 export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
 }
+
+// Chỉ ngày (dd/MM/yyyy) — dùng cho khoảng ngày uỷ quyền, hạn... không cần giờ phút.
+export function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+}

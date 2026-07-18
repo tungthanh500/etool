@@ -1,116 +1,320 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { apiGet } from "../api/client";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { ChevronLeft, ChevronRight, Download, FileText, Inbox, Plus, FilePlus2, Search } from "lucide-react";
+import { apiGet, apiDownload, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useWebSocket } from "../hooks/useWebSocket";
-import { usePushNotifications } from "../hooks/usePushNotifications";
-import { Toast } from "../components/Toast";
-import type { DocumentSummary } from "../types";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Input,
+  Select,
+  SkeletonRows,
+  useToast,
+} from "../components/ui";
+import {
+  statusLabel,
+  typeLabel,
+  STATUS_LABELS,
+  STATUS_TONES,
+  EVENT_LABELS,
+  EVENT_TONES,
+} from "../lib/labels";
+import { formatDateTime } from "../lib/formatDate";
+import type { DocumentListResponse, DocumentSummary } from "../types";
 
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT: "Nháp",
-  PENDING: "Chờ duyệt",
-  APPROVED: "Đã duyệt",
-  REJECTED: "Đã từ chối",
-  CHANGES_REQUESTED: "Yêu cầu chỉnh sửa",
-};
+const LIMIT = 20;
+
+function StepDots({ current, total }: { current: number; total: number }) {
+  return (
+    <span className="step-dots" title={`Bước ${current}/${total}`}>
+      {Array.from({ length: total }).map((_, i) => {
+        const n = i + 1;
+        const cls = n < current ? "is-done" : n === current ? "is-current" : "";
+        return <span key={i} className={`step-dots__dot ${cls}`} />;
+      })}
+      <span className="step-dots__label">
+        {current}/{total}
+      </span>
+    </span>
+  );
+}
 
 export function DocumentListPage() {
-  const { user, logout } = useAuth();
-  const [tab, setTab] = useState<"own" | "pending">("own");
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") === "pending" ? "pending" : "own";
+  const q = params.get("q") ?? "";
+  const status = params.get("status") ?? "";
+  const from = params.get("from") ?? "";
+  const to = params.get("to") ?? "";
+  const page = Math.max(1, Number.parseInt(params.get("page") ?? "1", 10) || 1);
+
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const { lastEvent } = useWebSocket(true);
-  const { supported: pushSupported, permission: pushPermission, subscribe: subscribePush } =
-    usePushNotifications();
+  const { toast } = useToast();
+
+  // Xuất Excel theo đúng bộ lọc đang áp (q/status/from/to) của tab "Của tôi".
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const qs = new URLSearchParams();
+      if (q) qs.set("q", q);
+      if (status) qs.set("status", status);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      await apiDownload(`/api/documents/export${suffix}`, "danh-sach-van-ban.xlsx");
+    } catch (err) {
+      toast({
+        tone: "danger",
+        title: "Xuất Excel thất bại",
+        message: err instanceof ApiError ? err.message : "Không thể xuất file",
+      });
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  // Đổi bất kỳ field lọc nào (trừ page/tab) đều reset về trang 1 — tránh đứng ở
+  // trang 5 của kết quả cũ rồi bấm lọc mới ra danh sách rỗng gây hiểu nhầm "hết dữ liệu".
+  function updateFilter(patch: Record<string, string>) {
+    const next = new URLSearchParams(params);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
+    if (!("page" in patch)) next.set("page", "1");
+    setParams(next);
+  }
 
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
       const path = tab === "own" ? "/api/documents" : "/api/documents/pending";
-      setDocuments(await apiGet<DocumentSummary[]>(path));
+      const qs = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
+      if (q) qs.set("q", q);
+      if (status) qs.set("status", status);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      const data = await apiGet<DocumentListResponse>(`${path}?${qs.toString()}`);
+      setDocuments(data.items);
+      setTotal(data.total);
     } finally {
       setLoading(false);
     }
-  }, [tab]);
+  }, [tab, q, status, from, to, page]);
 
   useEffect(() => {
     fetchList();
   }, [fetchList]);
 
+  // Sự kiện realtime: vừa refetch danh sách, vừa hiện toast.
   useEffect(() => {
-    if (lastEvent) fetchList();
-  }, [lastEvent, fetchList]);
+    if (!lastEvent) return;
+    fetchList();
+    toast({
+      tone: EVENT_TONES[lastEvent.type] ?? "primary",
+      title: lastEvent.actorName,
+      message: `${EVENT_LABELS[lastEvent.type] ?? lastEvent.type}: ${lastEvent.title}`,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastEvent]);
 
   const canCreate = user?.role.permissions.includes("document:create") ?? false;
-  const canManageUsers = user?.role.permissions.includes("user:manage") ?? false;
+  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+  const hasFilters = q || status || from || to;
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <h1>e-Approval</h1>
-        <div>
-          <span className="current-user">
-            {user?.fullName} ({user?.role.name})
-          </span>
-          {canManageUsers && <Link to="/users">Quản lý user</Link>}
-          {pushSupported && pushPermission !== "granted" && (
-            <button onClick={() => subscribePush()}>Bật thông báo</button>
-          )}
-          <button onClick={() => logout()}>Đăng xuất</button>
+    <div>
+      <div className="list-toolbar">
+        <div className="segmented" role="tablist" aria-label="Chuyển tab danh sách văn bản">
+          <button
+            type="button"
+            className={`segmented__item ${tab === "own" ? "is-active" : ""}`}
+            role="tab"
+            aria-selected={tab === "own"}
+            onClick={() => setParams({})}
+          >
+            <FileText size={16} />
+            Của tôi
+          </button>
+          <button
+            type="button"
+            className={`segmented__item ${tab === "pending" ? "is-active" : ""}`}
+            role="tab"
+            aria-selected={tab === "pending"}
+            onClick={() => setParams({ tab: "pending" })}
+          >
+            <Inbox size={16} />
+            Chờ tôi duyệt
+          </button>
         </div>
-      </header>
 
-      <div className="tabs">
-        <button className={tab === "own" ? "active" : ""} onClick={() => setTab("own")}>
-          Của tôi
-        </button>
-        <button className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}>
-          Chờ tôi duyệt
-        </button>
-        {canCreate && (
-          <Link className="btn-create" to="/documents/new">
-            + Tạo văn bản
-          </Link>
-        )}
+        <div style={{ display: "flex", gap: "var(--sp-3)" }}>
+          {tab === "own" && (
+            <Button
+              variant="ghost"
+              leftIcon={<Download size={17} />}
+              loading={exporting}
+              onClick={handleExport}
+            >
+              Xuất Excel
+            </Button>
+          )}
+          {canCreate && (
+            <Button variant="primary" leftIcon={<Plus size={17} />} onClick={() => navigate("/documents/new")}>
+              Tạo văn bản
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="list-filters">
+        <div className="list-filters__search">
+          <Search size={16} />
+          <input
+            className="input list-filters__search-input"
+            value={q}
+            onChange={(e) => updateFilter({ q: e.target.value })}
+            placeholder="Tìm theo tiêu đề hoặc số văn bản..."
+          />
+        </div>
+        <Select value={status} onChange={(e) => updateFilter({ status: e.target.value })}>
+          <option value="">Tất cả trạng thái</option>
+          {Object.keys(STATUS_LABELS).map((s) => (
+            <option key={s} value={s}>
+              {statusLabel(s)}
+            </option>
+          ))}
+        </Select>
+        <Input type="date" value={from} onChange={(e) => updateFilter({ from: e.target.value })} />
+        <span className="list-filters__sep">–</span>
+        <Input type="date" value={to} onChange={(e) => updateFilter({ to: e.target.value })} />
       </div>
 
       {loading ? (
-        <p>Đang tải...</p>
+        <div className="table-wrap">
+          <SkeletonRows rows={5} cols={6} />
+        </div>
       ) : documents.length === 0 ? (
-        <p>Không có văn bản nào.</p>
+        <div className="card">
+          <EmptyState
+            icon={<FilePlus2 size={26} />}
+            title={
+              hasFilters
+                ? "Không tìm thấy văn bản phù hợp"
+                : tab === "own"
+                  ? "Chưa có văn bản nào"
+                  : "Không có hồ sơ chờ duyệt"
+            }
+            desc={
+              hasFilters
+                ? "Thử đổi từ khoá hoặc bộ lọc khác."
+                : tab === "own"
+                  ? "Các văn bản bạn tạo sẽ hiển thị ở đây."
+                  : "Khi có hồ sơ cần bạn phê duyệt, chúng sẽ xuất hiện tại đây."
+            }
+            action={
+              !hasFilters && tab === "own" && canCreate ? (
+                <Button variant="primary" leftIcon={<Plus size={17} />} onClick={() => navigate("/documents/new")}>
+                  Tạo văn bản
+                </Button>
+              ) : undefined
+            }
+          />
+        </div>
       ) : (
-        <table className="doc-table">
-          <thead>
-            <tr>
-              <th>Tiêu đề</th>
-              <th>Loại</th>
-              <th>Trạng thái</th>
-              <th>Bước</th>
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => (
-              <tr key={doc.id}>
-                <td>
-                  <Link to={`/documents/${doc.id}`}>{doc.title}</Link>
-                </td>
-                <td>{doc.type}</td>
-                <td>
-                  <span className={`badge badge-${doc.status.toLowerCase()}`}>
-                    {STATUS_LABELS[doc.status] ?? doc.status}
-                  </span>
-                </td>
-                <td>
-                  {doc.currentStep}/{doc.workflow.steps.length}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+        <>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Số VB</th>
+                  <th>Tiêu đề</th>
+                  <th>Loại</th>
+                  <th>Trạng thái</th>
+                  <th>Tiến độ</th>
+                  <th>Ngày tạo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.map((doc) => (
+                  <tr
+                    key={doc.id}
+                    className="is-clickable"
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Xem chi tiết văn bản ${doc.title}`}
+                    onClick={() => navigate(`/documents/${doc.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        navigate(`/documents/${doc.id}`);
+                      }
+                    }}
+                  >
+                    <td style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                      {doc.docNo ?? "—"}
+                    </td>
+                    <td className="table__primary">{doc.title}</td>
+                    <td>{typeLabel(doc.type)}</td>
+                    <td>
+                      <Badge tone={STATUS_TONES[doc.status] ?? "neutral"}>
+                        {statusLabel(doc.status)}
+                      </Badge>
+                    </td>
+                    <td>
+                      <StepDots current={doc.currentStep} total={doc.workflow.steps.length} />
+                    </td>
+                    <td style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
+                      {formatDateTime(doc.createdAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-      <Toast event={lastEvent} />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginTop: "var(--sp-4)",
+            }}
+          >
+            <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
+              {total} văn bản · Trang {page}/{totalPages}
+            </span>
+            <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<ChevronLeft size={15} />}
+                disabled={page <= 1}
+                onClick={() => updateFilter({ page: String(page - 1) })}
+              >
+                Trước
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => updateFilter({ page: String(page + 1) })}
+              >
+                Sau
+                <ChevronRight size={15} />
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

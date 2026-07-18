@@ -7,7 +7,9 @@ export function authorize(permission: string) {
       return;
     }
 
-    if (!req.user.role.permissions.includes(permission)) {
+    // "*" là quyền wildcard của role Admin — phủ mọi permission cấp route.
+    const perms = req.user.role.permissions;
+    if (!perms.includes("*") && !perms.includes(permission)) {
       res.status(403).json({ error: "Không đủ quyền thực hiện thao tác này" });
       return;
     }

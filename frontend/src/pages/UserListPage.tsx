@@ -1,9 +1,20 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { UserPlus, Pencil, Users } from "lucide-react";
 import { apiGet } from "../api/client";
+import {
+  Avatar,
+  Badge,
+  Button,
+  EmptyState,
+  PageHeader,
+  SkeletonRows,
+} from "../components/ui";
+import { roleLabel, ROLE_TONES } from "../lib/labels";
 import type { User } from "../types";
 
 export function UserListPage() {
+  const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -14,45 +25,94 @@ export function UserListPage() {
   }, []);
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <h1>Quản lý user</h1>
-        <Link to="/documents">← Quay lại danh sách văn bản</Link>
-      </header>
-
-      <div className="tabs">
-        <Link className="btn-create" to="/users/new">
-          + Thêm user
-        </Link>
-      </div>
+    <div>
+      <PageHeader
+        title="Quản lý user"
+        subtitle="Tạo và phân quyền tài khoản người dùng"
+        actions={
+          <Button
+            variant="primary"
+            leftIcon={<UserPlus size={17} />}
+            onClick={() => navigate("/users/new")}
+          >
+            Thêm user
+          </Button>
+        }
+      />
 
       {loading ? (
-        <p>Đang tải...</p>
+        <div className="table-wrap">
+          <SkeletonRows rows={4} cols={5} />
+        </div>
+      ) : users.length === 0 ? (
+        <div className="card">
+          <EmptyState icon={<Users size={26} />} title="Chưa có user nào" />
+        </div>
       ) : (
-        <table className="doc-table">
-          <thead>
-            <tr>
-              <th>Họ tên</th>
-              <th>Email</th>
-              <th>Vai trò</th>
-              <th>Phòng ban</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>{u.fullName}</td>
-                <td>{u.email}</td>
-                <td>{u.role.name}</td>
-                <td>{u.department.name}</td>
-                <td>
-                  <Link to={`/users/${u.id}/edit`}>Sửa</Link>
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Họ tên</th>
+                <th>Tên đăng nhập</th>
+                <th>Email liên hệ</th>
+                <th>Vai trò</th>
+                <th>Phòng ban</th>
+                <th>Trạng thái</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr
+                  key={u.id}
+                  className="is-clickable"
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Sửa user ${u.fullName}`}
+                  onClick={() => navigate(`/users/${u.id}/edit`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      navigate(`/users/${u.id}/edit`);
+                    }
+                  }}
+                >
+                  <td>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-3)" }}>
+                      <Avatar name={u.fullName} size="sm" />
+                      <span className="table__primary">{u.fullName}</span>
+                    </span>
+                  </td>
+                  <td style={{ fontFamily: "var(--font-mono)" }}>{u.username}</td>
+                  <td style={{ color: "var(--text-muted)" }}>{u.email}</td>
+                  <td>
+                    <Badge tone={ROLE_TONES[u.role.name] ?? "neutral"}>{roleLabel(u.role.name)}</Badge>
+                  </td>
+                  <td>{u.department.name}</td>
+                  <td>
+                    <Badge tone={u.isActive ? "success" : "neutral"}>
+                      {u.isActive ? "Đang hoạt động" : "Đã vô hiệu hoá"}
+                    </Badge>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      leftIcon={<Pencil size={15} />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/users/${u.id}/edit`);
+                      }}
+                    >
+                      Sửa
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

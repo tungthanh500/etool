@@ -6,8 +6,11 @@ const prisma = new PrismaClient();
 const ROLES: { name: string; permissions: string[] }[] = [
   { name: "Staff", permissions: ["document:create", "document:read:own"] },
   { name: "Dept_Head", permissions: ["document:approve:dept"] },
-  { name: "Director", permissions: ["document:approve:final", "user:manage"] },
+  // Giám đốc thuần duyệt nghiệp vụ — mọi quyền quản trị đã chuyển về role Admin.
+  { name: "Director", permissions: ["document:approve:final"] },
   { name: "Accountant", permissions: ["document:approve:payment"] },
+  // Admin: superuser toàn hệ thống. "*" được middleware authorize hiểu là mọi quyền.
+  { name: "Admin", permissions: ["*"] },
 ];
 
 const DEPARTMENTS = ["Ban Giám đốc", "Phòng Hành chính - Kế toán"];
@@ -15,11 +18,12 @@ const DEPARTMENTS = ["Ban Giám đốc", "Phòng Hành chính - Kế toán"];
 // Mật khẩu dùng chung cho tài khoản test, chỉ dành cho môi trường dev cục bộ.
 const DEV_PASSWORD = "ChangeMe123!";
 
-const USERS: { email: string; fullName: string; roleName: string; departmentName: string }[] = [
-  { email: "staff@example.com", fullName: "Nguyễn Văn Staff", roleName: "Staff", departmentName: "Phòng Hành chính - Kế toán" },
-  { email: "depthead@example.com", fullName: "Trần Thị Trưởng Phòng", roleName: "Dept_Head", departmentName: "Phòng Hành chính - Kế toán" },
-  { email: "director@example.com", fullName: "Lê Văn Giám Đốc", roleName: "Director", departmentName: "Ban Giám đốc" },
-  { email: "accountant@example.com", fullName: "Phạm Thị Kế Toán", roleName: "Accountant", departmentName: "Phòng Hành chính - Kế toán" },
+const USERS: { username: string; email: string; fullName: string; roleName: string; departmentName: string }[] = [
+  { username: "staff", email: "staff@example.com", fullName: "Nguyễn Văn Staff", roleName: "Staff", departmentName: "Phòng Hành chính - Kế toán" },
+  { username: "depthead", email: "depthead@example.com", fullName: "Trần Thị Trưởng Phòng", roleName: "Dept_Head", departmentName: "Phòng Hành chính - Kế toán" },
+  { username: "director", email: "director@example.com", fullName: "Lê Văn Giám Đốc", roleName: "Director", departmentName: "Ban Giám đốc" },
+  { username: "accountant", email: "accountant@example.com", fullName: "Phạm Thị Kế Toán", roleName: "Accountant", departmentName: "Phòng Hành chính - Kế toán" },
+  { username: "admin", email: "admin@example.com", fullName: "Quản trị hệ thống", roleName: "Admin", departmentName: "Ban Giám đốc" },
 ];
 
 // Workflow.name quy ước trùng với Document.type để route tạo document tra cứu trực tiếp.
@@ -29,7 +33,19 @@ const WORKFLOWS: { name: string; description: string; steps: string[] }[] = [
   { name: "PAYMENT", description: "Đề xuất thanh toán", steps: ["Dept_Head", "Accountant", "Director"] },
 ];
 
+function assertSafeToSeed() {
+  if (process.env.NODE_ENV === "production" && process.env.FORCE_SEED !== "1") {
+    console.error(
+      "Từ chối chạy seed trên production (NODE_ENV=production) vì sẽ reset mật khẩu các user mẫu về giá trị dùng chung. " +
+        "Nếu chắc chắn muốn chạy, đặt FORCE_SEED=1.",
+    );
+    process.exit(1);
+  }
+}
+
 async function main() {
+  assertSafeToSeed();
+
   for (const role of ROLES) {
     await prisma.role.upsert({
       where: { name: role.name },
@@ -54,8 +70,9 @@ async function main() {
 
     await prisma.user.upsert({
       where: { email: u.email },
-      update: { fullName: u.fullName, roleId: role.id, departmentId: department.id },
+      update: { username: u.username, fullName: u.fullName, roleId: role.id, departmentId: department.id },
       create: {
+        username: u.username,
         email: u.email,
         fullName: u.fullName,
         passwordHash,

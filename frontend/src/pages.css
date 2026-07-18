@@ -1,0 +1,699 @@
+/* ============================================================
+   Page-specific styles (login, list, detail, forms)
+   ============================================================ */
+
+/* ---------------- Alert ---------------- */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  font-size: var(--fs-base);
+  border: 1px solid transparent;
+}
+.alert__icon {
+  flex: none;
+  margin-top: 1px;
+}
+.alert--danger {
+  background: var(--danger-subtle);
+  color: var(--danger-text);
+  border-color: var(--danger);
+}
+.alert--warning {
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+}
+.alert--info {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+/* ---------------- Login ---------------- */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  background:
+    radial-gradient(1200px 600px at 50% -20%, var(--primary-subtle), transparent 60%),
+    var(--bg-app);
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  padding: var(--sp-8);
+}
+.login-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-6);
+  text-align: center;
+}
+.login-brand__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-lg);
+  background: var(--primary);
+  color: #fff;
+}
+.login-brand__title {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  color: var(--text-heading);
+}
+.login-brand__sub {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  max-width: 280px;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* ---------------- Segmented control (tabs) ---------------- */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--bg-subtle);
+  border-radius: var(--r-md);
+  gap: 2px;
+}
+.segmented__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-4);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  border-radius: var(--r-sm);
+  transition: background var(--transition), color var(--transition);
+}
+.segmented__item:hover {
+  color: var(--text-heading);
+}
+.segmented__item.is-active {
+  background: var(--bg-surface);
+  color: var(--text-heading);
+  box-shadow: var(--shadow-sm);
+}
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.list-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+.list-filters__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 240px;
+  min-width: 200px;
+  color: var(--text-muted);
+}
+.list-filters__search svg {
+  position: absolute;
+  left: 12px;
+  pointer-events: none;
+}
+.list-filters__search-input {
+  width: 100%;
+  padding-left: 36px;
+}
+.list-filters__sep {
+  color: var(--text-muted);
+}
+
+/* ---------------- Dashboard ---------------- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+}
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+.stat-card.is-clickable {
+  cursor: pointer;
+  transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+.stat-card.is-clickable:hover {
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.stat-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--r-md);
+  flex: none;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+.stat-card--primary .stat-card__icon {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+.stat-card--warning .stat-card__icon {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+.stat-card--success .stat-card__icon {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+.stat-card--danger .stat-card__icon {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+.stat-card__value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-heading);
+}
+.stat-card__title {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.bar-chart {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-4);
+  height: 200px;
+  padding-top: var(--sp-3);
+}
+.bar-chart__col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.bar-chart__track {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.bar-chart__bar {
+  width: 60%;
+  max-width: 48px;
+  min-height: 2px;
+  background: var(--primary);
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  transition: height var(--transition);
+}
+.bar-chart__value {
+  position: absolute;
+  top: -20px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-heading);
+}
+.bar-chart__label {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.dash-section {
+  margin-top: var(--sp-5);
+}
+.dash-section:first-of-type {
+  margin-top: var(--sp-2);
+}
+.dash-section__label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-heading);
+  margin-bottom: var(--sp-3);
+}
+.dash-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* ---------------- Step dots (list) ---------------- */
+.step-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.step-dots__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.step-dots__dot.is-done {
+  background: var(--success);
+}
+.step-dots__dot.is-current {
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-subtle);
+}
+.step-dots__label {
+  margin-left: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* ---------------- Doc detail: meta + stepper ---------------- */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--sp-4);
+}
+.meta-item__label {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.meta-item__value {
+  font-size: var(--fs-base);
+  color: var(--text-heading);
+  font-weight: 500;
+}
+
+.stepper {
+  display: flex;
+  align-items: flex-start;
+  margin-top: var(--sp-2);
+}
+.stepper__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  text-align: center;
+  position: relative;
+}
+.stepper__step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--border-strong);
+}
+.stepper__step.is-done:not(:last-child)::after {
+  background: var(--success);
+}
+.stepper__marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-surface);
+  border: 2px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  z-index: 1;
+  position: relative;
+}
+.stepper__step.is-done .stepper__marker {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
+.stepper__step.is-current .stepper__marker {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--primary-subtle);
+}
+.stepper__label {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  max-width: 90px;
+}
+.stepper__step.is-current .stepper__label {
+  color: var(--text-heading);
+  font-weight: 600;
+}
+
+@media (max-width: 480px) {
+  .stepper {
+    overflow-x: auto;
+    padding-bottom: var(--sp-2);
+  }
+  .stepper__step {
+    min-width: 68px;
+  }
+}
+
+/* ---------------- File chips ---------------- */
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  transition: border-color var(--transition), background var(--transition);
+}
+.file-chip:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+.file-chip__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  background: var(--danger-subtle);
+  color: var(--danger-text);
+  flex: none;
+}
+.file-chip__name {
+  font-size: var(--fs-base);
+  color: var(--text-heading);
+  font-weight: 500;
+  word-break: break-word;
+}
+.file-chip__meta {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.file-chip__actions {
+  margin-left: auto;
+}
+
+/* Dropzone */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-6);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color var(--transition), background var(--transition);
+}
+.dropzone:hover,
+.dropzone.is-drag {
+  border-color: var(--primary);
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+.dropzone__hint {
+  font-size: var(--fs-xs);
+}
+
+/* ---------------- Timeline ---------------- */
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tl-item {
+  display: flex;
+  gap: var(--sp-3);
+  position: relative;
+  padding-bottom: var(--sp-5);
+}
+.tl-item:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 36px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.tl-item__avatar {
+  position: relative;
+  z-index: 1;
+}
+.tl-item__body {
+  flex: 1;
+  min-width: 0;
+}
+.tl-item__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.tl-item__author {
+  font-weight: 600;
+  color: var(--text-heading);
+}
+.tl-item__time {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.tl-item__comment {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--bg-subtle);
+  border-radius: var(--r-md);
+  font-size: var(--fs-base);
+  color: var(--text-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.comment-box {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-end;
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--border);
+}
+.comment-box .textarea {
+  flex: 1;
+}
+
+/* ---------------- Form layout ---------------- */
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  max-width: 520px;
+}
+.doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.section-gap {
+  margin-top: var(--sp-5);
+}
+
+/* ---------------- Workflow builder ---------------- */
+/* Trình dựng flow: mỗi bước là 1 card kéo-thả, kèm sơ đồ xem trước realtime. */
+.flow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.flow-step {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition),
+    opacity var(--transition);
+}
+.flow-step.is-dragging {
+  opacity: 0.4;
+}
+/* Đường chỉ báo vị trí sẽ thả (trên/dưới card đang được rê tới). */
+.flow-step.is-drop-before {
+  box-shadow: 0 -2px 0 0 var(--primary);
+}
+.flow-step.is-drop-after {
+  box-shadow: 0 2px 0 0 var(--primary);
+}
+.flow-step__handle {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: grab;
+  flex-shrink: 0;
+}
+.flow-step__handle:active {
+  cursor: grabbing;
+}
+.flow-step__num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.flow-step__body {
+  flex: 1;
+  min-width: 0;
+}
+.flow-step__hint {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.flow-step__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+/* Sơ đồ duyệt xem trước — pipeline node + connector, dùng chung ngôn ngữ .stepper. */
+.flow-preview {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding: var(--sp-2) 0;
+}
+.flow-preview__node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  flex-shrink: 0;
+  min-width: 72px;
+}
+.flow-preview__marker {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-surface);
+  border: 2px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.flow-preview__node--endpoint .flow-preview__marker {
+  background: var(--success-subtle);
+  border-color: var(--success);
+  color: var(--success);
+}
+.flow-preview__label {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  max-width: 88px;
+}
+.flow-preview__connector {
+  flex: 1;
+  min-width: 24px;
+  height: 2px;
+  background: var(--border-strong);
+  margin-top: 14px;
+}
+.flow-preview__empty {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  font-style: italic;
+  padding: var(--sp-2) 0;
+}
+
+/* Card danh sách flow: mini-pipeline nội tuyến thay chuỗi badge phẳng. */
+.flow-card-mini {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+.flow-card-mini__step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-body);
+}
+.flow-card-mini__num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

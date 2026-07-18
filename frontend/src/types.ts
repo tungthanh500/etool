@@ -11,11 +11,15 @@ export interface Department {
 
 export interface User {
   id: string;
+  username: string;
   email: string;
   fullName: string;
   roleId: string;
   departmentId: string;
   createdAt: string;
+  mustChangePassword: boolean;
+  isActive: boolean;
+  signatureUrl: string | null;
   role: Role;
   department: Department;
 }
@@ -33,7 +37,29 @@ export interface Attachment {
   fileName: string;
   fileUrl: string;
   mimeType: string;
+  kind: string; // "ORIGINAL" | "APPROVED"
   createdAt: string;
+}
+
+export interface AuditLog {
+  id: string;
+  category: string; // AUTH | DOCUMENT | USER | WORKFLOW | FILE
+  action: string;
+  actorId: string | null;
+  actor: { id: string; fullName: string; email: string } | null;
+  actorEmail: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  detail: string | null;
+  ip: string | null;
+  createdAt: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLog[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface WorkflowStep {
@@ -62,10 +88,11 @@ export interface DocumentLog {
 
 export interface DocumentSummary {
   id: string;
+  docNo: string | null;
   title: string;
-  type: "PURCHASE" | "PAYMENT" | "GENERAL";
+  type: string;
   formData: unknown;
-  status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CHANGES_REQUESTED";
+  status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CHANGES_REQUESTED" | "WITHDRAWN";
   creatorId: string;
   currentStep: number;
   workflowId: string;
@@ -79,6 +106,34 @@ export interface DocumentSummary {
 
 export interface DocumentDetail extends DocumentSummary {
   logs: DocumentLog[];
+  // Tên người uỷ quyền nếu user hiện tại chỉ có quyền duyệt văn bản này QUA uỷ quyền
+  // (null khi duyệt bằng chính quyền của mình hoặc không có quyền duyệt).
+  approvingVia?: string | null;
+}
+
+export interface DelegationUser {
+  id: string;
+  fullName: string;
+  email: string;
+  role: { name: string };
+}
+
+export interface Delegation {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  startDate: string;
+  endDate: string;
+  createdAt: string;
+  fromUser: DelegationUser;
+  toUser: DelegationUser;
+}
+
+export interface DocumentListResponse {
+  items: DocumentSummary[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface WsEvent {
@@ -86,4 +141,31 @@ export interface WsEvent {
   documentId: string;
   title: string;
   actorName: string;
+}
+
+// Hộp thông báo trong app (R23) — bản ghi bền của mỗi sự kiện notify().
+export interface NotificationItem {
+  id: string;
+  type: string;
+  documentId: string | null;
+  title: string;
+  actorName: string | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface NotificationsResponse {
+  items: NotificationItem[];
+  unreadCount: number;
+}
+
+export interface DashboardData {
+  isAdmin: boolean;
+  myByStatus: Record<string, number>;
+  myTotal: number;
+  pendingForMe: number;
+  monthly: { month: string; count: number }[];
+  allByStatus?: Record<string, number>;
+  allTotal?: number;
+  byDepartment?: { department: string; count: number }[];
 }

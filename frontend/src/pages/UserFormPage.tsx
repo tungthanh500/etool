@@ -1,24 +1,19 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
-import { apiGet, apiPost, ApiError } from "../api/client";
+import { useNavigate, useParams } from "react-router-dom";
+import { apiGet, apiPatch, apiPost, ApiError } from "../api/client";
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  Select,
+  PageHeader,
+  PageLoading,
+} from "../components/ui";
+import { roleLabel } from "../lib/labels";
 import type { Role, Department, User } from "../types";
-
-// PATCH không có helper riêng trong api/client — dùng fetch trực tiếp ở đây,
-// đủ đơn giản để không cần mở rộng client.ts cho một verb chỉ dùng 1 nơi.
-async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "PATCH",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) {
-    throw new ApiError(res.status, (data && data.error) || `Lỗi ${res.status}`);
-  }
-  return data as T;
-}
 
 export function UserFormPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,11 +22,14 @@ export function UserFormPage() {
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [roleId, setRoleId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
+  const [isActive, setIsActive] = useState(true);
+  const [isSelf, setIsSelf] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -41,17 +39,21 @@ export function UserFormPage() {
       apiGet<Role[]>("/api/roles"),
       apiGet<Department[]>("/api/departments"),
       isEdit ? apiGet<User>(`/api/users/${id}`) : Promise.resolve(null),
+      apiGet<User>("/api/auth/me"),
     ])
-      .then(([rolesList, deptList, user]) => {
+      .then(([rolesList, deptList, u, me]) => {
         setRoles(rolesList);
         setDepartments(deptList);
         if (rolesList.length > 0) setRoleId(rolesList[0].id);
         if (deptList.length > 0) setDepartmentId(deptList[0].id);
-        if (user) {
-          setEmail(user.email);
-          setFullName(user.fullName);
-          setRoleId(user.roleId);
-          setDepartmentId(user.departmentId);
+        if (u) {
+          setUsername(u.username);
+          setEmail(u.email);
+          setFullName(u.fullName);
+          setRoleId(u.roleId);
+          setDepartmentId(u.departmentId);
+          setIsActive(u.isActive);
+          setIsSelf(u.id === me.id);
         }
       })
       .finally(() => setLoading(false));
@@ -63,11 +65,11 @@ export function UserFormPage() {
     setSubmitting(true);
     try {
       if (isEdit) {
-        const body: Record<string, string> = { fullName, roleId, departmentId };
+        const body: Record<string, string | boolean> = { username, email, fullName, roleId, departmentId, isActive };
         if (password) body.password = password;
         await apiPatch(`/api/users/${id}`, body);
       } else {
-        await apiPost("/api/users", { email, fullName, password, roleId, departmentId });
+        await apiPost("/api/users", { username, email, fullName, password, roleId, departmentId });
       }
       navigate("/users");
     } catch (err) {
@@ -77,65 +79,110 @@ export function UserFormPage() {
     }
   }
 
-  if (loading) return <div className="page">Đang tải...</div>;
+  if (loading) return <PageLoading />;
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <h1>{isEdit ? "Sửa user" : "Thêm user"}</h1>
-        <Link to="/users">← Quay lại danh sách</Link>
-      </header>
+    <div>
+      <PageHeader
+        title={isEdit ? "Sửa user" : "Thêm user"}
+        backTo="/users"
+        backLabel="Quay lại danh sách"
+      />
 
-      <form className="doc-form" onSubmit={handleSubmit}>
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            disabled={isEdit}
-          />
-        </label>
-        <label>
-          Họ tên
-          <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
-        </label>
-        <label>
-          {isEdit ? "Mật khẩu mới (để trống nếu giữ nguyên)" : "Mật khẩu"}
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required={!isEdit}
-            minLength={8}
-          />
-        </label>
-        <label>
-          Vai trò
-          <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
-            {roles.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Phòng ban
-          <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {error && <p className="form-error">{error}</p>}
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Đang lưu..." : "Lưu"}
-        </button>
-      </form>
+      <Card>
+        <form className="form-stack" onSubmit={handleSubmit}>
+          <Field
+            label="Tên đăng nhập"
+            hint="3-32 ký tự: chữ thường, số, dấu chấm/gạch dưới/gạch nối. User không tự đổi được."
+          >
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value.toLowerCase())}
+              placeholder="tendangnhap"
+              required
+              minLength={3}
+              maxLength={32}
+              pattern="[a-z0-9][a-z0-9._\-]{2,31}"
+            />
+          </Field>
+
+          <Field label="Email liên hệ">
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="ban@congty.com"
+              required
+            />
+          </Field>
+
+          <Field label="Họ tên">
+            <Input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+          </Field>
+
+          <Field
+            label={isEdit ? "Mật khẩu mới" : "Mật khẩu"}
+            hint={isEdit ? "Để trống nếu giữ nguyên · tối thiểu 8 ký tự" : "Tối thiểu 8 ký tự"}
+          >
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={isEdit ? "••••••••" : ""}
+              required={!isEdit}
+              minLength={8}
+            />
+          </Field>
+
+          <Field label="Vai trò">
+            <Select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {roleLabel(r.name)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field label="Phòng ban">
+            <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          {isEdit && (
+            <Field
+              label="Trạng thái tài khoản"
+              hint={isSelf ? "Không thể tự vô hiệu hoá tài khoản của chính mình" : undefined}
+            >
+              <label style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", cursor: isSelf ? "default" : "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={isActive}
+                  disabled={isSelf}
+                  onChange={(e) => setIsActive(e.target.checked)}
+                />
+                {isActive ? "Đang hoạt động" : "Đã vô hiệu hoá"}
+              </label>
+            </Field>
+          )}
+
+          {error && <Alert tone="danger">{error}</Alert>}
+
+          <div style={{ display: "flex", gap: "var(--sp-3)" }}>
+            <Button type="submit" variant="primary" loading={submitting}>
+              {submitting ? "Đang lưu..." : "Lưu"}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => navigate("/users")}>
+              Huỷ
+            </Button>
+          </div>
+        </form>
+      </Card>
     </div>
   );
 }

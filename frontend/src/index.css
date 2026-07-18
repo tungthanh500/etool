@@ -1,29 +1,177 @@
+/* ============================================================
+   e-Approval — Design tokens & base styles
+   Nguồn duy nhất cho màu / khoảng cách / bo góc / bóng / kiểu chữ.
+   Không hardcode màu ở nơi khác — luôn dùng biến từ đây.
+   ============================================================ */
+
 :root {
-  --text: #222;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
+  /* ---- Neutrals (light) ---- */
+  --bg-app: #f6f7f9;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f1f3f5;
+  --bg-hover: #f4f6f8;
+  --border: #e4e7ec;
+  --border-strong: #d0d5dd;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  /* ---- Text ---- */
+  --text-heading: #101828;
+  --text-body: #475467;
+  --text-muted: #667085;
+  --text-inverse: #ffffff;
 
-  font: 16px/145% var(--sans);
+  /* ---- Brand ---- */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-active: #1e40af;
+  --primary-subtle: #eff4ff;
+  --on-primary: #ffffff;
+  --focus-ring: rgba(37, 99, 235, 0.35);
+
+  /* ---- Semantic (trạng thái) ---- */
+  --success: #16a34a;
+  --success-text: #15803d;
+  --success-subtle: #ecfdf3;
+  --warning: #d97706;
+  --warning-text: #b45309;
+  --warning-subtle: #fffaeb;
+  --danger: #dc2626;
+  --danger-text: #b42318;
+  --danger-subtle: #fef3f2;
+  --orange: #ea580c;
+  --orange-text: #c2410c;
+  --orange-subtle: #fff4ed;
+  --neutral: #667085;
+  --neutral-text: #475467;
+  --neutral-subtle: #f2f4f7;
+
+  /* ---- Spacing (4px base) ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+
+  /* ---- Radius ---- */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-full: 999px;
+
+  /* ---- Shadow ---- */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12);
+
+  /* ---- Typography ---- */
+  --font: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+
+  /* ---- Motion ---- */
+  --transition: 150ms ease;
+  --transition-slow: 220ms ease;
+
+  /* ---- Layout ---- */
+  --sidebar-w: 244px;
+  --topbar-h: 60px;
+
   color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  font-family: var(--font);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  color: var(--text-body);
+  background: var(--bg-app);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Dark theme: kích hoạt theo hệ điều hành HOẶC khi <html data-theme="dark">.
+   Light bắt buộc khi <html data-theme="light"> (ghi đè auto). */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --text: #d1d5db;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
+  :root:not([data-theme="light"]) {
+    --bg-app: #0f1115;
+    --bg-surface: #181b21;
+    --bg-subtle: #1f232b;
+    --bg-hover: #21262f;
+    --border: #2a2e37;
+    --border-strong: #3a3f4b;
+
+    --text-heading: #f3f4f6;
+    --text-body: #cbd1da;
+    --text-muted: #8b929e;
+
+    --primary: #3b82f6;
+    --primary-hover: #60a5fa;
+    --primary-active: #93c5fd;
+    --primary-subtle: #1e2a44;
+    --focus-ring: rgba(59, 130, 246, 0.45);
+
+    --success-text: #4ade80;
+    --success-subtle: #0f2417;
+    --warning-text: #fbbf24;
+    --warning-subtle: #2a2011;
+    --danger-text: #f87171;
+    --danger-subtle: #2a1615;
+    --orange-text: #fb923c;
+    --orange-subtle: #2a1a10;
+    --neutral-text: #cbd1da;
+    --neutral-subtle: #20242c;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
   }
 }
+
+/* Ghi đè thủ công qua data-theme trên <html> */
+:root[data-theme="dark"] {
+  --bg-app: #0f1115;
+  --bg-surface: #181b21;
+  --bg-subtle: #1f232b;
+  --bg-hover: #21262f;
+  --border: #2a2e37;
+  --border-strong: #3a3f4b;
+  --text-heading: #f3f4f6;
+  --text-body: #cbd1da;
+  --text-muted: #8b929e;
+  --primary: #3b82f6;
+  --primary-hover: #60a5fa;
+  --primary-active: #93c5fd;
+  --primary-subtle: #1e2a44;
+  --focus-ring: rgba(59, 130, 246, 0.45);
+  --success-text: #4ade80;
+  --success-subtle: #0f2417;
+  --warning-text: #fbbf24;
+  --warning-subtle: #2a2011;
+  --danger-text: #f87171;
+  --danger-subtle: #2a1615;
+  --orange-text: #fb923c;
+  --orange-subtle: #2a1a10;
+  --neutral-text: #cbd1da;
+  --neutral-subtle: #20242c;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* ============================================================
+   Base / reset
+   ============================================================ */
 
 * {
   box-sizing: border-box;
@@ -35,19 +183,34 @@ body {
 }
 
 h1,
-h2 {
-  color: var(--text-h);
+h2,
+h3 {
+  color: var(--text-heading);
   font-weight: 600;
-}
-
-h1 {
-  font-size: 28px;
   margin: 0;
 }
 
+h1 {
+  font-size: var(--fs-2xl);
+  letter-spacing: -0.01em;
+}
+
 h2 {
-  font-size: 18px;
-  margin: 24px 0 8px;
+  font-size: var(--fs-lg);
+}
+
+h3 {
+  font-size: var(--fs-md);
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+a:hover {
+  color: var(--primary-hover);
 }
 
 button {
@@ -55,6 +218,22 @@ button {
   cursor: pointer;
 }
 
-a {
-  color: #2c7be5;
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

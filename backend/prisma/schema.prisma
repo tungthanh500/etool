@@ -10,6 +10,9 @@ generator client {
 
 model User {
   id            String        @id @default(uuid())
+  // Tên đăng nhập (chữ thường) — user KHÔNG tự đổi được (chỉ Admin), tránh tự khoá mình
+  // ngoài hệ thống như sự cố đổi email 2026-07-17. Email chỉ còn là thông tin liên hệ.
+  username      String        @unique
   email         String        @unique
   passwordHash  String
   fullName      String
@@ -20,10 +23,41 @@ model User {
   documents     Document[]
   actions       DocumentLog[]
   pushSubscriptions PushSubscription[]
+  auditLogs     AuditLog[]    @relation("AuditActor")
   createdAt     DateTime      @default(now())
+  // Bước 15 (ACTION_PLAN Giai đoạn 1): true khi Admin tạo mới/reset mật khẩu — buộc user đổi
+  // mật khẩu ở lần đăng nhập kế tiếp; tắt lại khi tự đổi mật khẩu thành công qua /auth/change-password.
+  mustChangePassword Boolean  @default(false)
+  // false = tài khoản bị vô hiệu hoá (nhân viên nghỉ việc) — chặn đăng nhập mới và request đang hiệu lực.
+  isActive      Boolean       @default(true)
+  // Đường dẫn ảnh chữ ký mẫu (PNG/JPG) trong UPLOAD_DIR, dùng để đóng vào PDF ở bước duyệt cuối (mục 2.5).
+  signatureUrl  String?
+  delegationsGiven    Delegation[] @relation("DelegationsGiven")
+  delegationsReceived Delegation[] @relation("DelegationsReceived")
+  notifications Notification[]
 
   @@index([roleId])
   @@index([departmentId])
+}
+
+// Uỷ quyền duyệt (mục 4.1): trong khoảng [startDate, endDate], toUser được duyệt
+// thay fromUser — thừa hưởng role + ràng buộc phòng ban CỦA NGƯỜI UỶ QUYỀN.
+// Chồng lấn khoảng ngày của cùng fromUser được kiểm ở app layer (Prisma không
+// diễn đạt được ràng buộc exclusion theo khoảng thời gian).
+model Delegation {
+  id         String   @id @default(uuid())
+  fromUserId String
+  fromUser   User     @relation("DelegationsGiven", fields: [fromUserId], references: [id])
+  toUserId   String
+  toUser     User     @relation("DelegationsReceived", fields: [toUserId], references: [id])
+  startDate  DateTime
+  endDate    DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  // Truy vấn "ai đang uỷ quyền cho tôi lúc này" lọc theo toUserId + khoảng ngày.
+  @@index([toUserId, startDate, endDate])
 }
 
 model Role {
@@ -41,10 +75,13 @@ model Department {
 
 model Document {
   id             String        @id @default(uuid())
+  // Số văn bản dạng VB-YYYY-NNNN, cấp tuần tự theo năm (GMT+7) — nullable để văn bản
+  // tạo trước khi có tính năng này (nếu chưa backfill) không vỡ ràng buộc unique.
+  docNo          String?       @unique
   title          String
   type           String        // "PURCHASE", "PAYMENT", "GENERAL"
   formData       Json          // Lưu trữ dữ liệu Form động dưới dạng JSONB
-  status         String        // "DRAFT", "PENDING", "APPROVED", "REJECTED", "CHANGES_REQUESTED"
+  status         String        // "DRAFT", "PENDING", "APPROVED", "REJECTED", "CHANGES_REQUESTED", "WITHDRAWN"
   creatorId      String
   creator        User          @relation(fields: [creatorId], references: [id])
   currentStep    Int           @default(1)
@@ -52,8 +89,11 @@ model Document {
   workflow       Workflow      @relation(fields: [workflowId], references: [id])
   attachments    Attachment[]
   logs           DocumentLog[]
+  notifications  Notification[]
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+  // Lần nhắc hạn gần nhất (job nhắc hồ sơ PENDING quá hạn) — chống nhắc trùng trong ngày.
+  lastRemindedAt DateTime?
 
   @@index([creatorId])
   @@index([workflowId])
@@ -67,6 +107,7 @@ model Attachment {
   fileName   String   // Tên file gốc (ví dụ: "De_xuat_mua_cap.pdf")
   fileUrl    String   // Đường dẫn lưu file vật lý đã mã hóa UUID trên Ubuntu
   mimeType   String
+  kind       String   @default("ORIGINAL") // "ORIGINAL" (file gốc) | "APPROVED" (bản đã duyệt/đã ký)
   createdAt  DateTime @default(now())
 
   @@index([documentId])
@@ -114,4 +155,47 @@ model PushSubscription {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  category   String   // AUTH | DOCUMENT | USER | WORKFLOW | FILE
+  action     String   // LOGIN, LOGOUT, LOGIN_FAILED, PASSWORD_CHANGE, SUBMIT, APPROVE, REJECT, REQUEST_CHANGE, EDIT, WITHDRAW, RESUBMIT, COMMENT, USER_CREATE, USER_UPDATE, USER_DISABLE, USER_ENABLE, SIGNATURE_SET, SIGNATURE_CLEAR, WORKFLOW_CREATE/UPDATE/DELETE, FILE_UPLOAD, FILE_DOWNLOAD, FILE_DELETE
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id])
+  actorEmail String?  // giữ email cả khi actorId null (đăng nhập thất bại)
+  targetType String?  // document | user | workflow | attachment
+  targetId   String?
+  detail     String?  // ghi chú người-đọc-được (tiêu đề hồ sơ, tên file...)
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([category])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+// Bộ đếm cấp số văn bản theo năm (GMT+7) — upsert kèm increment nguyên tử,
+// tránh trùng số khi nhiều request tạo văn bản đồng thời (xem routes/documents.ts).
+model DocCounter {
+  year Int @id
+  seq  Int @default(0)
+}
+
+// Hộp thông báo trong app (R23): bản ghi bền cho mỗi sự kiện notify() gửi tới từng user —
+// WS toast chỉ hiện khi tab đang mở, Web Push cần HTTPS; bảng này đảm bảo không lỡ thông báo.
+model Notification {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String    // trùng event type WS: "document:created", "document:reminder"...
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  title      String    // tiêu đề văn bản tại thời điểm phát sinh
+  actorName  String?
+  isRead     Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
 }

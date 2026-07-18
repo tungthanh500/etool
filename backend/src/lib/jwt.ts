@@ -9,7 +9,7 @@ function requireEnv(name: string): string {
 }
 
 const JWT_SECRET: string = requireEnv("JWT_SECRET");
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "8h";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "10h";
 
 export interface TokenPayload {
   sub: string;

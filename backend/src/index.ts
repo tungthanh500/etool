@@ -1,28 +1,44 @@
 import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import cookieParser from "cookie-parser";
+import helmet from "helmet";
 import multer from "multer";
 import { Prisma } from "@prisma/client";
 import healthRouter from "./routes/health";
 import authRouter from "./routes/auth";
 import documentsRouter from "./routes/documents";
 import usersRouter from "./routes/users";
+import departmentsRouter from "./routes/departments";
 import metaRouter from "./routes/meta";
 import pushRouter from "./routes/push";
+import workflowsRouter from "./routes/workflows";
+import auditRouter from "./routes/audit";
+import dashboardRouter from "./routes/dashboard";
+import delegationsRouter from "./routes/delegations";
+import notificationsRouter from "./routes/notifications";
 import { AppError } from "./lib/errors";
 import { initWebSocket } from "./lib/ws";
+import { initReminderJob } from "./lib/reminder";
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 
+// API thuần JSON (không render HTML) — dùng cấu hình mặc định của Helmet.
+app.use(helmet());
 app.use(express.json());
 app.use(cookieParser());
 app.use("/api", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/documents", documentsRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/departments", departmentsRouter);
 app.use("/api", metaRouter);
 app.use("/api/push", pushRouter);
+app.use("/api/workflows", workflowsRouter);
+app.use("/api/audit", auditRouter);
+app.use("/api/dashboard", dashboardRouter);
+app.use("/api/delegations", delegationsRouter);
+app.use("/api/notifications", notificationsRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -40,7 +56,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     res.status(409).json({ error: "Văn bản vừa được người khác xử lý, vui lòng tải lại" });
     return;
   }
-  if (err instanceof Error && err.message.startsWith("Chỉ chấp nhận file")) {
+  if (err instanceof Error && err.message.startsWith("Chỉ chấp nhận")) {
     res.status(400).json({ error: err.message });
     return;
   }
@@ -53,3 +69,4 @@ const server = app.listen(PORT, () => {
 });
 
 initWebSocket(server);
+initReminderJob();

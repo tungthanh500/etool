@@ -1,0 +1,214 @@
+# EXISTING-BUG.md — Rủi ro & Vấn đề còn tồn tại (e-Approval Workflow)
+
+> **Nguồn gốc tài liệu:** Thay thế `CONVERSATION.md` (báo cáo cũ của Antigravity, đã lỗi thời — liệt kê sai một số mục đã được fix). Danh sách dưới đây được kiểm chứng **trực tiếp trên code thực tế** trong repo `~/etool` (đọc từng file liên quan qua SSH, không suy đoán từ tài liệu cũ) vào **2026-07-16**.
+>
+> **Dành cho Claude/người kế nhiệm:** Trước khi sửa bất kỳ mục nào, đọc lại đúng phần liên quan, xác nhận lại code hiện tại (có thể đã thay đổi từ lúc viết tài liệu này), và cập nhật trạng thái thành `[ĐÃ FIX — <ngày>, commit <hash>]` sau khi hoàn tất.
+
+---
+
+## Hiện trạng khi đánh giá (2026-07-16)
+
+- Backend Bước 1–9 + Web Push (Bước 8) + Trang quản trị User (Bước 7): code đã hoàn thành, `tsc --noEmit` sạch, đã commit (13 commit, HEAD `82682f5`).
+- Frontend core (login, danh sách, tạo văn bản, chi tiết/duyệt, WebSocket): đã hoàn thành, test qua trình duyệt thật.
+- Không có dev server nào đang chạy; chỉ có container `etool-postgres-1` đang `Up (healthy)`.
+- GitHub sync: chưa push, chờ `gh auth login` hoàn tất.
+- **R08 (bug logs thiếu entry) đã được fix ở Bước 9** (commit `01ae7f4`) — xác nhận lại đúng trong `backend/src/routes/documents.ts`: thứ tự `tx.documentLog.create()` chạy trước `tx.document.update({include: {logs}})` ở cả 4 action (`approve`/`reject`/`request-change`/`resubmit`).
+- **Cập nhật 2026-07-16 (cùng ngày, Giai đoạn 0 của `ACTION_PLAN.md`):** toàn bộ **NHÓM 1** đã fix trừ R06 — **R01, R02, R03, R04, R05, R07 đã fix và kiểm chứng thật** (curl + đối chiếu DB + đối chiếu cổng mạng), xem chi tiết ở từng mục bên dưới. R06 (HTTPS) vẫn ghi nhận chờ lúc triển khai, không thuộc phạm vi code sửa được ngay. Chưa commit các thay đổi này lên git.
+- **Cập nhật 2026-07-17 (sau khi hoàn tất toàn bộ 4 giai đoạn `ACTION_PLAN.md`):** rà soát lại từng mục **trực tiếp trên code hiện tại** (không suy từ tài liệu). Đã fix thêm: **R09 (một phần — giới hạn chấp nhận được), R10, R11, R13, R15**. **R20 đổi đánh giá: rủi ro KHÔNG còn bằng 0** vì trang quản trị Workflow (Bước 11) đã tồn tại — nâng ưu tiên P3 → P2. Còn mở: R06, R12, R14, R16, R17, R18, R19, R20. Toàn bộ thay đổi từ Bước 11 trở đi vẫn chưa commit (HEAD vẫn là `82682f5` Bước 8), repo chưa có remote GitHub.
+
+---
+
+## NHÓM 1 — Bảo mật nghiêm trọng (xử lý trước khi go-live)
+
+### [R01] ~~`JWT_SECRET` vẫn là placeholder~~
+- **File:** `backend/.env` — `JWT_SECRET="change-me-in-production"`.
+- **Nguy cơ:** Ai biết chuỗi này có thể tự ký JWT với `userId` bất kỳ, bypass hoàn toàn xác thực.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16 (chưa commit)**. Sinh secret bằng `openssl rand -hex 64` (64 byte hex), thay vào `backend/.env`; `.env.example` thêm ghi chú cách sinh + cảnh báo không dùng giá trị mẫu. Đã restart backend + đăng nhập lại thành công (token ký bằng secret cũ tự động hết hiệu lực do không còn ai giữ).
+
+### [R02] ~~Mật khẩu Postgres mặc định + DB expose ra LAN~~
+- **File:** `docker-compose.yml` (`ports: "${POSTGRES_PORT:-5432}:5432"` → bind `0.0.0.0`), root `.env` (`POSTGRES_PASSWORD=eapproval`), `backend/.env` (`DATABASE_URL` cùng password yếu).
+- **Nguy cơ:** Bất kỳ máy nào trong LAN 192.168.10.0/24 kết nối thẳng tới Postgres với mật khẩu đoán được.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16 (chưa commit)**. Làm đúng thứ tự đã ghi: (1) `ALTER USER eapproval PASSWORD '<new>'` qua `psql` trên container đang chạy (không mất dữ liệu volume); (2) cập nhật `POSTGRES_PASSWORD` (root `.env`) + `DATABASE_URL` (`backend/.env`) khớp mật khẩu mới (`openssl rand -base64 24` lọc còn 32 ký tự alphanumeric, tránh vấn đề encode trong URL); (3) `docker-compose.yml` đổi port mapping thành `127.0.0.1:${POSTGRES_PORT:-5432}:5432`; (4) `docker compose up -d` recreate container. **Kiểm chứng:** container `healthy` sau recreate; `ss -tlnp` xác nhận chỉ nghe `127.0.0.1:5432` (trước đó `0.0.0.0:5432`); backend reconnect + login thật (`director@example.com`) trả đúng dữ liệu cũ — không mất dữ liệu.
+
+### [R03] ~~Seed script không có guard chống chạy trên production~~
+- **File:** `backend/prisma/seed.ts` — hàm `main()` không kiểm tra `NODE_ENV`.
+- **Nguy cơ:** Vô tình chạy `prisma:seed` trên production sẽ reset mật khẩu 4 user mẫu về `ChangeMe123!` (biến `DEV_PASSWORD`).
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16 (chưa commit)**. Thêm hàm `assertSafeToSeed()` đầu `main()`: nếu `NODE_ENV === "production"` và không có `FORCE_SEED=1` → in lỗi tiếng Việt + `process.exit(1)`. **Kiểm chứng:** `NODE_ENV=production npx tsx prisma/seed.ts` → bị chặn, exit code 1; chạy lại không set `NODE_ENV` → seed chạy bình thường (exit code 0).
+
+### [R04] ~~Không có rate limiting cho `/api/auth/login`~~
+- **File:** `backend/src/routes/auth.ts` — route `POST /login` không có middleware giới hạn số lần thử.
+- **Nguy cơ:** Brute-force mật khẩu không giới hạn.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16 (chưa commit)**. Cài `express-rate-limit`, áp riêng cho `POST /login` (giới hạn 10 lần/15 phút/IP, trả 429 kèm message tiếng Việt). **Kiểm chứng:** curl sai mật khẩu 11 lần liên tiếp cùng IP → 10 lần đầu 401, lần 11 → 429; đối chiếu `AuditLog` xác nhận đúng 10 entry `AUTH/LOGIN_FAILED` được ghi (lần bị chặn không tính vào audit vì không chạm tới route handler).
+
+### [R05] ~~Không có HTTP security headers (Helmet)~~
+- **File:** `backend/src/index.ts`, `backend/package.json` — không có dependency `helmet`, không import/dùng ở đâu.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16 (chưa commit)**. Cài `helmet`, `app.use(helmet())` đặt trước mọi route (dùng cấu hình mặc định vì backend là API JSON thuần, không render HTML). **Kiểm chứng:** response có đủ header bảo mật (CSP, X-Frame-Options, X-Content-Type-Options...); WebSocket không bị ảnh hưởng (gắn trực tiếp vào HTTP server ở sự kiện `upgrade`, không đi qua Express middleware); luồng login/download cũ vẫn chạy bình thường.
+
+### [R06] Không có HTTPS — cookie JWT truyền bản rõ
+- **Xác nhận:** Không có `nginx` cài trên máy (`which nginx` → không tìm thấy), không có cert Let's Encrypt, backend chạy HTTP thuần trên port 4000, frontend Vite dev trên 5173.
+- **Nguy cơ:** Cookie JWT (dù `HttpOnly`) và toàn bộ traffic đi bản rõ trên LAN — sniff được nếu có kẻ tấn công trong cùng mạng.
+- **Ghi chú thêm:** HTTPS còn là điều kiện bắt buộc để Web Push (Service Worker) hoạt động — hiện tại truy cập qua IP LAN HTTP không phải "secure context" nên Service Worker không đăng ký được (xem thêm ghi chú Web Push trong `IMPLEMENTATION_PLAN.md` Bước 8).
+- **Trạng thái:** ❌ Chưa fix.
+
+### [R07] ~~Kiểm tra MIME type upload chỉ dựa vào phần mở rộng file~~
+- **File:** `backend/src/lib/upload.ts` — `fileFilter` chỉ check `path.extname(file.originalname)`, không đọc magic bytes/nội dung thật của file.
+- **Nguy cơ:** Đổi tên file `.exe`/mã độc thành `.pdf`/`.docx` sẽ qua được filter (dù mimeType báo cáo bởi client cũng không đáng tin).
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16 (chưa commit)**. Thêm middleware `verifyMagicBytes` (`backend/src/lib/upload.ts`) chạy SAU khi multer ghi file lên đĩa, dùng `file-type` (v22, ESM-only — cần ambient module declaration riêng ở `backend/src/types/file-type.d.ts` vì `moduleResolution: "node"` không tự resolve type của gói ESM) đối chiếu magic bytes thật với phần mở rộng khai báo; không khớp → xoá file + 400. Gắn vào cả 2 route upload: `POST /api/documents` (tạo văn bản) và `POST /api/documents/:id/approve` (bản đã ký). **Kiểm chứng:** file ELF đổi đuôi thành `.pdf` → 400 "nội dung file không khớp định dạng khai báo", không còn file rác trong `UPLOAD_DIR`; PDF thật và DOCX thật (zip OOXML hợp lệ) đều qua bình thường (201, không false positive).
+
+---
+
+## NHÓM 2 — Vận hành & chức năng
+
+### [R08] ~~Bug: response action endpoints trả logs thiếu entry vừa tạo~~
+- **Trạng thái:** ✅ **ĐÃ FIX** ở Bước 9 (2026-07-16, commit `01ae7f4`). Xác nhận lại trực tiếp trong `backend/src/routes/documents.ts`: cả 4 transaction (`approve`/`reject`/`request-change`/`resubmit`) đều gọi `tx.documentLog.create(...)` **trước** `tx.document.update({include: {..., logs}})`.
+
+### [R09] ~~`GET /api/documents/pending` lọc ở application layer~~
+- **File:** `backend/src/routes/documents.ts:129-141` — query `findMany({ where: { status: "PENDING" } })` tải **toàn bộ** hồ sơ PENDING của cả công ty vào memory, rồi mới `.filter(d => isCurrentApprover(d, req.user!))` bằng JS.
+- **Nguy cơ:** Không hiệu quả khi số lượng hồ sơ PENDING lớn — tải dư thừa dữ liệu không thuộc về người dùng hiện tại trước khi lọc.
+- **Trạng thái:** ✅ **ĐÃ FIX MỘT PHẦN — 2026-07-17, mục 3.2 ACTION_PLAN (chưa commit), giới hạn còn lại chấp nhận được.** Phần lọc thô đã đẩy xuống DB (`workflow.steps.some({approverRole ∈ [role mình + role người uỷ quyền]})` — thu hẹp mạnh tập cần tải); điều kiện chính xác (đúng bước hiện tại + Dept_Head cùng phòng ban) **không diễn đạt được trong Prisma `where`** (so sánh 2 cột khác bảng) nên vẫn hậu kiểm `isCurrentApprover()` ở app layer — giới hạn này đã ghi rõ trong code comment, chấp nhận được ở quy mô nội bộ hiện tại.
+
+### [R10] ~~Không có pagination~~
+- **File:** `backend/src/routes/documents.ts` — cả `GET /` (dòng 117) và `GET /pending` (dòng 131) đều không có `take`/`skip`.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17, mục 3.2 ACTION_PLAN (chưa commit).** `parseListQuery()` dùng chung (`q`/`status`/`from`/`to`/`page`/`limit`): `GET /` phân trang + đếm **thật ở DB**; `GET /pending` phân trang trên mảng sau hậu kiểm (hệ quả của giới hạn R09, đã ghi chú trong code). Response đổi sang shape `{items, total, page, limit}`, frontend có thanh lọc + phân trang đồng bộ URL.
+
+### [R11] ~~Không thể vô hiệu hóa tài khoản user (nhân viên nghỉ việc)~~
+- **File:** `backend/prisma/schema.prisma` — model `User` (dòng 11-27) **không có field** `isActive`/`deletedAt` nào cả. `backend/src/routes/users.ts` cũng không có route `DELETE`.
+- **Đánh giá lại so với báo cáo cũ:** Effort thực tế **cao hơn ước tính ban đầu** — đây không chỉ là thêm 1 route, mà cần **migration Prisma mới** để thêm field vào schema trước khi có route xử lý.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16, Giai đoạn 1 ACTION_PLAN (migration `add_user_account_fields`, chưa commit).** `User.isActive Boolean @default(true)`; `PATCH /api/users/:id` cho bật/tắt (chặn tự vô hiệu hoá chính mình); login/authenticate từ chối user bị khoá; uỷ quyền (4.1) tự treo khi người uỷ quyền bị khoá; thông báo/nhắc hạn chỉ gửi tới user active.
+
+### [R12] WebSocket không có reconnect logic
+- **File:** `frontend/src/hooks/useWebSocket.ts` — không có `ws.onclose` kèm retry/exponential backoff. Mất kết nối (mạng chập chờn, backend restart) → im lặng cho tới khi người dùng tự F5.
+- **Trạng thái:** ❌ Chưa fix.
+
+### [R13] ~~Không có audit log cho thay đổi quyền user~~
+- **File:** `backend/src/routes/users.ts` — `PATCH /:id` cho phép đổi `roleId`/`departmentId`/`password` nhưng không ghi lại ai đã đổi, đổi từ gì sang gì, lúc nào (khác với `DocumentLog` chỉ theo dõi hành động trên văn bản, không theo dõi hành động quản trị user).
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-16, Bước 12 (AuditLog toàn hệ thống, chưa commit) + mở rộng ở các bước sau.** `lib/audit.ts` + bảng `AuditLog`; `users.ts` ghi `USER_CREATE`/`USER_UPDATE`/`USER_ENABLE`/`USER_DISABLE`; các hành động quản trị khác cũng phủ audit (`DEPT_*`, `WORKFLOW_*`, `DELEGATION_*`, `AUTH`, `FILE`...); trang `/audit` cho Admin tra cứu.
+
+### [R14] `formData` không có schema validation theo từng loại văn bản
+- **File:** `backend/src/routes/documents.ts:29-59` — chỉ kiểm tra `formData` là JSON string hợp lệ và là object (không phải array/null), không validate cấu trúc cụ thể theo `type` (`PURCHASE`/`PAYMENT`/`GENERAL`).
+- **Trạng thái:** ❌ Chưa fix — chờ spec cụ thể từng loại form nếu cần làm.
+
+---
+
+## NHÓM 3 — Chống sập & vận hành production
+
+### [R15] ~~Không có backup database tự động~~
+- **Xác nhận:** Không tìm thấy script backup nào trong repo, không có crontab nào cấu hình (`crontab -l` rỗng).
+- **⚠️ RỦI RO ĐÃ THÀNH SỰ THẬT — 2026-07-16:** lệnh `prisma migrate dev` chạy trong môi trường non-interactive đã tự reset (xoá sạch) toàn bộ dữ liệu DB dev mà không có gì để khôi phục. Xem chi tiết đầy đủ trong `IMPLEMENTATION_PLAN.md` mục "SỰ CỐ NGHIÊM TRỌNG". Đã thêm mục 3.4 vào `ACTION_PLAN.md` để xử lý, kèm khuyến nghị nâng độ ưu tiên.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17, mục 3.4 ACTION_PLAN (script trong repo, chưa commit).** `scripts/backup-db.sh`: `pg_dump -Fc` qua docker exec + tar `backend/uploads/` (DB không chứa file — vá ở Bước 24A), ghi `.tmp` rồi rename, xoay vòng giữ 7 bản, log đầy đủ; cron hệ điều hành `0 2 * * *` (GMT+7, độc lập với backend); `scripts/RESTORE.md` 6 bước kèm quy tắc an toàn migrate (backup trước + `--create-only` + `migrate deploy`). Đã restore thử thật vào DB tạm để kiểm chứng. **Lưu ý vận hành:** crontab là cấu hình theo máy — chuyển server phải cài lại.
+
+### [R16] `GET /health` không kiểm tra kết nối DB
+- **File:** `backend/src/routes/health.ts` — trả cứng `{ status: "ok" }`, không có bất kỳ query Prisma nào để xác nhận Postgres còn sống.
+- **Trạng thái:** ❌ Chưa fix.
+
+### [R17] Backend chạy bằng `tsx watch` — chưa có process manager cho production
+- **File:** `backend/package.json` — script `dev: "tsx watch src/index.ts"`. Có sẵn `start: "node dist/index.js"` nhưng không có gì (pm2/systemd) chạy nó bền vững.
+- **Xác nhận thêm:** `pm2` **chưa được cài** trên máy (`which pm2` → not found). Không tìm thấy file `ecosystem.config.js` hay systemd `.service` nào trong repo/hệ thống.
+- **Trạng thái:** ❌ Chưa fix.
+
+---
+
+## NHÓM 4 — Kỹ thuật dài hạn (backlog)
+
+### [R18] Không có test tự động
+- **Xác nhận:** `find` không thấy file `*.test.ts*`/`*.spec.ts*` nào trong `backend/src` hay `frontend/src`. Không có `jest`/`vitest`/`mocha` trong `package.json` của cả backend lẫn frontend.
+- **Trạng thái:** ❌ Chưa fix.
+
+### [R19] WebSocket registry in-memory, không scale nhiều instance
+- **File:** `backend/src/lib/ws.ts` — biến `connections: Map<string, Set<WebSocket>>` sống trong memory của 1 process Node duy nhất, không dùng Redis Pub/Sub hay cơ chế chia sẻ giữa nhiều instance.
+- **Ghi chú:** Hiện hệ thống chỉ chạy 1 instance nên chưa phải vấn đề thực tế, chỉ là giới hạn khi scale ngang sau này.
+- **Trạng thái:** ❌ Chưa fix (chưa cấp thiết).
+
+### [R20] Workflow bị sửa giữa chừng khi document đang PENDING
+- **Đánh giá cũ (2026-07-16, đã lỗi thời):** khi đó chưa có route admin nào sửa Workflow → rủi ro = 0.
+- **⚠️ ĐÁNH GIÁ LẠI 2026-07-17 — RỦI RO ĐÃ THÀNH HIỆN THỰC:** từ Bước 11, trang quản trị Workflow Builder + `PATCH /api/workflows/:id` đã tồn tại và **thay toàn bộ steps** (`deleteMany` + `createMany`) **không có guard** kiểm tra hồ sơ PENDING đang dùng workflow đó. Sửa flow khi có hồ sơ đang duyệt dở → `currentStep` có thể trỏ tới bước không còn tồn tại hoặc đổi role người duyệt giữa chừng. (`DELETE /:id` thì đã an toàn — FK chặn, trả 409 khi có văn bản dùng.)
+- **Hướng fix đề xuất:** trong `PATCH`, nếu payload có `steps` → đếm `document.count({workflowId, status: "PENDING"})`, > 0 thì trả 409 "Không thể sửa các bước: đang có văn bản chờ duyệt dùng luồng này" (vẫn cho sửa `description`).
+- **Trạng thái:** ❌ Chưa fix — **nâng ưu tiên P3 → P2** vì đã kích hoạt được qua UI thật.
+
+---
+
+## NHÓM 5 — UX & chức năng phát hiện qua phiên chạy thử nhập vai (Bước 28, 2026-07-17)
+
+> Nguồn: đóng vai Staff + Trưởng phòng chạy trọn vòng đời hồ sơ trên trình duyệt thật. Mục #3 của phiên đánh giá (ô nhập JSON thô khi tạo văn bản) chính là **R14** — không lập mã mới, R14 vẫn mở chờ spec.
+
+### [R21] ~~Nút "Duyệt" không có xác nhận~~
+- **Hiện tượng:** 1 click là duyệt ngay, không hỏi lại, không nhập được ý kiến — trong khi Từ chối/Yêu cầu chỉnh sửa/Thu hồi đều có modal. Hành động không hoàn tác được.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17 (chưa commit).** `PromptDialog` mở rộng (`optional`, `message`, tone `success`); bấm Duyệt mở modal ghi rõ hệ quả (bước cuối hay chuyển tiếp, kèm tên bản đã ký nếu có) + ô "Ý kiến (tuỳ chọn)". Backend vốn đã nhận `comment` — ý kiến ghi vào timeline.
+
+### [R22] ~~`formData` không hiển thị trên trang chi tiết~~
+- **Hiện tượng:** dữ liệu đặc thù (số tiền, nhà cung cấp...) nhập lúc tạo nhưng người duyệt không thấy ở đâu — mất thông tin ra quyết định.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17 (chưa commit).** Card "Dữ liệu form" trên trang chi tiết: bảng key–value, số format `vi-VN` (12.500.000), object lồng thì stringify. Chỉ hiện khi formData có nội dung.
+
+### [R23] ~~Không có hộp thông báo trong app~~
+- **Hiện tượng:** WS toast chỉ hiện khi đang mở tab đúng lúc; Web Push cần HTTPS (kẹt R06) — người duyệt offline là lỡ thông báo.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17 (chưa commit).** Bảng `Notification` (migration `add_notification`, cascade theo User/Document); `notify()` ghi DB trước rồi mới bắn WS/Push; `GET /api/notifications` (30 bản mới nhất + unreadCount), `POST /api/notifications/read-all`; chuông trên topbar có badge số chưa đọc, panel danh sách (item chưa đọc nền khác, click điều hướng tới hồ sơ, mở panel = đánh dấu đã đọc), đồng bộ realtime qua WS.
+
+### [R24] ~~Sidebar hiển thị role thô tiếng Anh~~
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17 (chưa commit).** `AppLayout` dùng `roleLabel()` — "Dept_Head" → "Trưởng phòng" ở cả trigger menu lẫn dropdown.
+
+### [R25] ~~Card Uỷ quyền duyệt + Chữ ký mẫu hiện với role không duyệt~~
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17 (chưa commit).** Helper mới `canApproveAnything()` (quyền `document:approve:*` hoặc `*`). Hai card chỉ hiện khi là người duyệt HOẶC có uỷ quyền liên quan (Staff **nhận** uỷ quyền vẫn thấy bảng + upload được chữ ký — vì khi duyệt thay, chữ ký của họ được đóng vào PDF); form "Tạo uỷ quyền" chỉ hiện với người duyệt. Subtitle trang đổi theo ngữ cảnh.
+
+### [R26] ~~4/6 stat card dashboard không click được~~
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17 (chưa commit).** Đã duyệt/Đang chờ/Cần sửa/Bị từ chối điều hướng `/documents?status=...` (filter có sẵn từ 3.2).
+
+### [R27] ~~Toast "Đã xử lý thành công" chung chung~~
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-17 (chưa commit).** Message theo hành động: "Đã duyệt văn bản" / "Đã từ chối văn bản" / "Đã gửi yêu cầu chỉnh sửa" / "Đã nộp lại văn bản".
+
+---
+
+## Bảng tóm tắt theo mức ưu tiên (cập nhật 2026-07-17 — rà trực tiếp trên code)
+
+### Còn mở
+
+| Mã | Hạng mục | Mức độ | Ghi chú | Ưu tiên |
+|---|---|---|---|---|
+| R06 | HTTPS / Nginx | 🟠 High | Làm lúc triển khai (cần cert/domain); cũng là điều kiện để Web Push chạy trên trình duyệt thật | **P1 — go-live** |
+| R17 | pm2/systemd process manager | 🟠 High | Đang chạy `tsx watch` + Vite dev; go-live cần build production + process manager | **P1 — go-live** |
+| R20 | Guard sửa Workflow khi có doc PENDING | 🟡 Medium | ⚠️ Rủi ro thành hiện thực từ Bước 11 (Workflow Builder) — xem hướng fix trong mục | **P2** |
+| R16 | Health check DB ping | 🟡 Medium | `/health` vẫn trả cứng `{status:"ok"}` | **P2** |
+| R12 | WS reconnect logic | 🟡 Medium | `useWebSocket.ts` chưa có retry/backoff — mất kết nối là im lặng tới khi F5 | **P2** |
+| R14 | `formData` schema theo loại văn bản | 🟡 Medium | Chờ spec từng loại form | **P3 (chờ spec)** |
+| R18 | Unit/Integration tests | 🔵 Tech debt | — | **Backlog** |
+| R19 | Redis Pub/Sub cho WebSocket | 🔵 Tech debt | Chỉ cần khi scale nhiều instance | **Backlog** |
+
+### Đã fix (chi tiết + cách kiểm chứng ở từng mục phía trên)
+
+| Mã | Hạng mục | Fix ở đâu / khi nào |
+|---|---|---|
+| R01 | Đổi `JWT_SECRET` | Giai đoạn 0 ACTION_PLAN, 2026-07-16 |
+| R02 | Postgres password + bind localhost | Giai đoạn 0, 2026-07-16 |
+| R03 | Guard seed production | Giai đoạn 0, 2026-07-16 |
+| R04 | Rate limit login | Giai đoạn 0, 2026-07-16 |
+| R05 | Helmet headers | Giai đoạn 0, 2026-07-16 |
+| R07 | MIME magic bytes | Giai đoạn 0, 2026-07-16 |
+| R08 | Bug logs thiếu entry vừa tạo | Bước 9, commit `01ae7f4` |
+| R09 | Lọc `/pending` ở DB | Mục 3.2, 2026-07-17 — **một phần**, giới hạn ghi trong code |
+| R10 | Pagination API | Mục 3.2, 2026-07-17 |
+| R11 | Vô hiệu hoá user (`isActive`) | Giai đoạn 1, 2026-07-16 |
+| R13 | Audit log quản trị user | Bước 12, 2026-07-16 + mở rộng các bước sau |
+| R15 | Backup DB + uploads tự động | Mục 3.4 + Bước 24A, 2026-07-17 |
+| R21 | Xác nhận + ý kiến khi Duyệt | Bước 29, 2026-07-17 |
+| R22 | Hiển thị `formData` trang chi tiết | Bước 29, 2026-07-17 |
+| R23 | Hộp thông báo trong app (chuông + badge) | Bước 29, 2026-07-17 |
+| R24 | Nhãn role tiếng Việt trên sidebar | Bước 29, 2026-07-17 |
+| R25 | Ẩn card uỷ quyền/chữ ký với role không duyệt | Bước 29, 2026-07-17 |
+| R26 | Stat card dashboard click được | Bước 29, 2026-07-17 |
+| R27 | Toast nói rõ hành động | Bước 29, 2026-07-17 |
+
+> ⚠️ Mọi fix trừ R08 đều **chưa commit** (HEAD vẫn `82682f5` — Bước 8); repo chưa có remote GitHub. Commit là việc tồn đọng ưu tiên cao nhất hiện tại.
+
+---
+
+## Điểm mạnh của hệ thống — đã làm đúng (giữ nguyên từ đánh giá trước, vẫn đúng)
+
+- ✅ Kiến trúc **Fat Server / Thin Client** đúng theo `PLAN.md`.
+- ✅ **JWT HttpOnly Cookie** — token không lộ ra JavaScript.
+- ✅ **RBAC truy vấn DB realtime** mỗi request — không trust claim quyền hạn trong token.
+- ✅ **Optimistic Concurrency Control** — race condition khi approve đã xử lý (`where: {currentStep, status}` → Prisma ném `P2025` thay vì ghi đè âm thầm).
+- ✅ **Cross-department guard** — `Dept_Head` chỉ duyệt hồ sơ cùng phòng ban.
+- ✅ **Orphan file cleanup** — file upload rollback được `fs.unlink` dọn dẹp khi transaction thất bại.
+- ✅ Index trên các FK quan trọng (`roleId`, `departmentId`, và các FK khác theo migration `add_indexes`).
+- ✅ **WebSocket authenticated** — `verifyClient` từ chối handshake trước khi upgrade nếu cookie không hợp lệ.
+- ✅ `passwordHash` không bao giờ lộ ra response — `SAFE_CREATOR_SELECT`/`SAFE_USER_SELECT`/`toSafeUser()` áp dụng nhất quán toàn codebase.
+- ✅ Prisma schema có `onDelete: Cascade`, quan hệ rõ ràng, dễ mở rộng.

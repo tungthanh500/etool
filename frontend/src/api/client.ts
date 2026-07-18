@@ -42,3 +42,59 @@ export async function apiPostForm<T>(path: string, formData: FormData): Promise<
   });
   return parseResponse<T>(res);
 }
+
+export async function apiPatchForm<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: "PATCH",
+    credentials: "include",
+    body: formData,
+  });
+  return parseResponse<T>(res);
+}
+
+export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "PATCH",
+    credentials: "include",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  return parseResponse<T>(res);
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  const res = await fetch(path, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  return parseResponse<T>(res);
+}
+
+// Tải file nhị phân (vd. Excel export) rồi kích hoạt trình duyệt lưu về máy.
+// Lỗi (403/500...) trả JSON nên vẫn parse được message để ném ApiError như các helper khác.
+export async function apiDownload(path: string, fallbackFilename: string): Promise<void> {
+  const res = await fetch(path, { credentials: "include" });
+  if (!res.ok) {
+    const isJson = res.headers.get("content-type")?.includes("application/json");
+    const body = isJson ? await res.json().catch(() => null) : null;
+    const message =
+      (body && typeof body === "object" && "error" in body ? (body as { error: string }).error : null) ??
+      `Lỗi ${res.status}`;
+    throw new ApiError(res.status, message);
+  }
+
+  // Ưu tiên tên file server gợi ý qua Content-Disposition, fallback tên truyền vào.
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^"]+)"?/.exec(disposition);
+  const filename = match?.[1] ?? fallbackFilename;
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

@@ -31,6 +31,11 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       return;
     }
 
+    if (!user.isActive) {
+      res.status(401).json({ error: "Tài khoản đã bị vô hiệu hoá" });
+      return;
+    }
+
     req.user = user;
     next();
   } catch (err) {

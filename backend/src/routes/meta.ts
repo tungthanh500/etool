@@ -16,12 +16,4 @@ router.get("/roles", authenticate, authorize("user:manage"), async (_req, res, n
   }
 });
 
-router.get("/departments", authenticate, authorize("user:manage"), async (_req, res, next) => {
-  try {
-    res.json(await prisma.department.findMany({ orderBy: { name: "asc" } }));
-  } catch (err) {
-    next(err);
-  }
-});
-
 export default router;
