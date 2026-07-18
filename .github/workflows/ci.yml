@@ -44,6 +44,8 @@ jobs:
           JWT_SECRET="ci-test-secret-0123456789abcdef"
           COOKIE_NAME="eapproval_token"
           NODE_ENV="test"
+          VAPID_PUBLIC_KEY="BBnokds8OX1zxF6jDNJtwLdFlWvp1iLWNM2Pu5Y93xG1eR81Vaemqt89ie2K4fd9Pcsp3iPYHdleEGcwymCEHoo"
+          VAPID_PRIVATE_KEY="waKYWFdSE0XPiQuQFOAh0LFn1kLviUktEHZX5CzAQpw"
           EOF
       - run: npx prisma generate
       - run: npx tsc --noEmit
