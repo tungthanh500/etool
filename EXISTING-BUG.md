@@ -194,8 +194,7 @@
 |---|---|---|---|---|
 | R06 | HTTPS / Caddy | 🟠 High | 🔶 **Đã chuẩn bị sẵn** (`deploy/Caddyfile`, `DEPLOY.md`, code hỗ trợ same-origin WS) — chỉ còn chạy lệnh sudo tại máy, người dùng hiện không ở gần máy | **P1 — go-live** |
 | R17 | systemd process manager | 🟠 High | 🔶 **Đã chuẩn bị sẵn** (`deploy/etool-backend.service`) — cùng cửa sổ thao tác với R06, xem `DEPLOY.md` | **P1 — go-live** |
-| R18 | Test tự động (còn thiếu test frontend) | 🔵 Tech debt | Backend integration (27 test) + CI đã có; còn thiếu test component/e2e frontend | **Một phần** |
-| R32 | Trang `/audit` hiện sai thông báo khi bị 403 | 🔵 Tech debt | Phát hiện 2026-07-19 khi test vai Giám đốc truy cập thẳng URL — backend chặn đúng 403, nhưng frontend hiện "Chưa có nhật ký nào" thay vì báo không đủ quyền | **P3** |
+| R18 | Test tự động (còn thiếu test frontend) | 🔵 Tech debt | Backend integration (39 test) + CI đã có; còn thiếu test component/e2e frontend | **Một phần** |
 
 ### Đã fix (chi tiết + cách kiểm chứng ở từng mục phía trên)
 
@@ -229,6 +228,7 @@
 | R29 | Frontend tự tính toán (vi phạm Fat Server) | Bước 38, 2026-07-19 — API preview + hook debounce |
 | R30 | Layout PAYMENT bó hẹp 520px | Bước 41, 2026-07-19 |
 | R31 | Seed user `hr` 2 ký tự vi phạm usernameSchema | Bước 41, 2026-07-19 |
+| R32 | Trang `/audit` hiện sai thông báo khi bị 403 | Bước 42, 2026-07-19 — `ForbiddenState` dùng chung + gate client `can(user,"audit:read")` |
 
 > ⚠️ **2026-07-19:** local `main` đang **trước `origin/main` 5 commit** (E2 preview, layout fix, D1/D4/D5, D2/D3 prep, docs) — chưa push. `git push` khi được yêu cầu.
 

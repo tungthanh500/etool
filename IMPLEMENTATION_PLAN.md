@@ -1886,3 +1886,34 @@ Người dùng yêu cầu: "đóng vai trò là người dùng ở mọi cấp �
 - Dọn sạch: xoá 3 văn bản test + 16 notification + 10 log + 2 attachment qua SQL, xoá 2 file PDF vật lý trong `backend/uploads/` — DB về **0 Document** như trước khi test. AuditLog giữ nguyên (là nhật ký thật của hệ thống).
 - `tsc --noEmit` sạch 2 phía sau các fix giữa chừng.
 - Chưa commit.
+
+---
+
+## Bước 42 — Quản lý Role/Permission + bộ lọc danh sách hồ sơ + fix R32 (2026-07-19)
+
+### Context
+Người dùng yêu cầu 3 việc: (1) trang audit chỉ cho người được phân quyền xem; (2) màn hình phân quyền cho user (chọn "Bản đầy đủ" qua AskUserQuestion); (3) bộ lọc danh sách hồ sơ theo người nộp + ngày duyệt của một người bất kỳ (chọn qua AskUserQuestion). Kế hoạch chi tiết lập qua Plan Mode (2 Explore agent bị đứt giữa chừng do session limit — tự khảo sát trực tiếp phần còn lại), lưu tại `/home/tung/.claude/plans/polished-dazzling-simon.md`.
+
+### Đã làm
+- **A (R32):** `frontend/src/components/ui/ForbiddenState.tsx` (mới, dùng chung, icon ShieldOff); `AuditLogPage.tsx` gate sớm bằng `can(user,"audit:read")` + `.catch` ApiError 403 → hiện "Không đủ quyền truy cập" thay vì "Chưa có nhật ký nào". Backend vốn đã chặn đúng từ trước (`authorize("audit:read")`).
+- **B (Role/Permission):**
+  - `@etool/shared`: catalog `PERMISSION_KEYS` (8 quyền) + type — nguồn duy nhất cho cả backend validate lẫn frontend checkbox; kèm ghi chú nghiệp vụ "quyền duyệt thật đến từ vị trí trong luồng duyệt".
+  - Backend: `routes/roles.ts` (mới) CRUD đầy đủ gate `user:manage` — GET (kèm `_count.users`), POST/PATCH (validate permission ⊆ catalog, chuẩn hoá `"*"`, P2002→409), DELETE (400 nếu role mình đang giữ, 409 nếu còn user, P2003 làm lưới thứ hai); **guard tự khoá**: PATCH role mình đang giữ mà bỏ cả `*` lẫn `user:manage` → 400. Audit ROLE_CREATE/UPDATE/DELETE. **Xoá `routes/meta.ts`** (GET /roles chuyển vào router mới, giữ nguyên shape — UserFormPage không phải sửa).
+  - Frontend: `RoleListPage.tsx` (theo mẫu DepartmentListPage — bảng role + badges quyền tiếng Việt + số tài khoản; modal checkbox "Toàn quyền" disable các quyền lẻ), `PERMISSION_LABELS` trong labels.ts, nav "Vai trò & quyền" (icon KeyRound, gate `user:manage`), route `/roles`, CSS `.checkbox-row`.
+- **C (bộ lọc):**
+  - Backend `parseListQuery` thêm 4 param (tự phủ GET `/`, `/pending`, `/export`): `creator` (contains tên người nộp, insensitive), `approvedBy`/`approvedFrom`/`approvedTo` → `logs: { some: { action: "APPROVE", userId?, createdAt range? } }`.
+  - `users.ts` thêm `GET /options` (TRƯỚC gate user:manage, chỉ authenticate) — `{id, fullName}` user active cho picker "Đã duyệt bởi" mà user thường cũng gọi được.
+  - Frontend `DocumentListPage.tsx`: 4 URL param mới qua `updateFilter` sẵn có; helper `buildFilterParams()` dùng chung fetch + export Excel; hàng lọc thứ 2 (ô tên người nộp — chỉ tab Chờ tôi duyệt, dropdown "Đã duyệt bởi", nhãn "Ngày nộp"/"Ngày duyệt" phân biệt 2 cặp date).
+- **Test:** `roles.test.ts` (7) + `documents.filters.test.ts` (5) — tổng 39/39 xanh.
+
+### Sự cố giữa chừng — đã fix tận gốc (đáng ghi nhớ)
+Sau khi thêm `PERMISSION_KEYS`, frontend browser chết trắng: `@etool/shared` build **CJS-only** trong khi Vite cần ESM — trước nay chạy được là nhờ pre-bundle cache cũ của Vite (process chạy từ 2 ngày trước); restart Vite xong thì serve raw CJS → `exports is not defined`. Chẩn đoán mất nhiều vòng vì Chrome còn cache module cũ theo URL (tab mới cùng renderer process vẫn dính). **Fix:** dual build — `shared/tsconfig.esm.json` (ES2022 → `dist/esm/` + `dist/esm/package.json {"type":"module"}`), `shared/package.json` thêm `exports` map (`import` → ESM, `require` → CJS, giữ `main`/`types` cũ cho backend). URL module mới (`dist/esm/index.js`) tự phá cache trình duyệt. Backend require CJS xác nhận vẫn chạy (`node -e require` + 39 test + tsc).
+
+### Nghiệm thu (PASS)
+- `tsc --noEmit` sạch 2 phía; `npm run build` root sạch; 39/39 test.
+- **Browser thật (admin + enghl):** (1) enghl mở `/audit` → "Không đủ quyền truy cập" (API xác nhận 403); (2) admin thấy nav "Vai trò & quyền", bảng 5 role đúng số tài khoản; tạo role "Kiểm soát nội bộ" 2 quyền → toast + hiện bảng; xoá role Dept_Head (còn 2 user) → toast đỏ 409 đúng message; xoá role test trống → 204 sạch; (3) danh sách hồ sơ tab Chờ tôi duyệt hiện đủ bộ lọc mới, dropdown "Đã duyệt bởi" load đúng 6 user thật từ `/api/users/options`, chọn bằng bàn phím thật → URL param `approvedBy` + page reset về 1, API trả 200 (total 0 — DB đang 0 văn bản, logic lọc có dữ liệu đã phủ bằng integration test).
+- Dọn sạch: role test đã xoá qua UI; DB không còn dữ liệu test.
+
+### Trạng thái
+- Cả 3 yêu cầu hoàn thành. R32 đóng (cập nhật EXISTING-BUG.md).
+- Chưa commit.
