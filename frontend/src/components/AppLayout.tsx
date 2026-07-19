@@ -16,6 +16,7 @@ import {
   Menu,
   ChevronDown,
   ShieldCheck,
+  KeyRound,
   UserCircle,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -200,6 +201,17 @@ export function AppLayout() {
                     <Building2 size={18} />
                   </span>
                   Phòng ban
+                </NavLink>
+              )}
+              {canManageUsers && (
+                <NavLink
+                  to="/roles"
+                  className={({ isActive }) => `nav-item ${isActive ? "is-active" : ""}`}
+                >
+                  <span className="nav-item__icon">
+                    <KeyRound size={18} />
+                  </span>
+                  Vai trò & quyền
                 </NavLink>
               )}
               {canManageWorkflows && (

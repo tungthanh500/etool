@@ -5,6 +5,7 @@ export { Avatar } from "./Avatar";
 export { Spinner, PageLoading } from "./Spinner";
 export { Skeleton, SkeletonRows } from "./Skeleton";
 export { EmptyState } from "./EmptyState";
+export { ForbiddenState } from "./ForbiddenState";
 export { Alert } from "./Alert";
 export { Field, Input, Select, Textarea } from "./Field";
 export { Modal, ConfirmDialog, PromptDialog } from "./Modal";

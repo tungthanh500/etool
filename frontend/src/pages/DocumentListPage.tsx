@@ -50,24 +50,46 @@ export function DocumentListPage() {
   const status = params.get("status") ?? "";
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
+  const creator = params.get("creator") ?? "";
+  const approvedBy = params.get("approvedBy") ?? "";
+  const approvedFrom = params.get("approvedFrom") ?? "";
+  const approvedTo = params.get("approvedTo") ?? "";
   const page = Math.max(1, Number.parseInt(params.get("page") ?? "1", 10) || 1);
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  // Danh sách {id, fullName} cho ô "Đã duyệt bởi" — endpoint mở cho mọi user đã đăng nhập.
+  const [userOptions, setUserOptions] = useState<{ id: string; fullName: string }[]>([]);
   const { lastEvent } = useWebSocket(true);
   const { toast } = useToast();
 
-  // Xuất Excel theo đúng bộ lọc đang áp (q/status/from/to) của tab "Của tôi".
+  useEffect(() => {
+    apiGet<{ id: string; fullName: string }[]>("/api/users/options")
+      .then(setUserOptions)
+      .catch(() => setUserOptions([]));
+  }, []);
+
+  // Gom bộ lọc đang áp thành query string — dùng chung cho fetchList và Xuất Excel.
+  function buildFilterParams(): URLSearchParams {
+    const qs = new URLSearchParams();
+    if (q) qs.set("q", q);
+    if (status) qs.set("status", status);
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    if (creator) qs.set("creator", creator);
+    if (approvedBy) qs.set("approvedBy", approvedBy);
+    if (approvedFrom) qs.set("approvedFrom", approvedFrom);
+    if (approvedTo) qs.set("approvedTo", approvedTo);
+    return qs;
+  }
+
+  // Xuất Excel theo đúng bộ lọc đang áp của tab "Của tôi".
   async function handleExport() {
     setExporting(true);
     try {
-      const qs = new URLSearchParams();
-      if (q) qs.set("q", q);
-      if (status) qs.set("status", status);
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
+      const qs = buildFilterParams();
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
       await apiDownload(`/api/documents/export${suffix}`, "danh-sach-van-ban.xlsx");
     } catch (err) {
@@ -97,18 +119,17 @@ export function DocumentListPage() {
     setLoading(true);
     try {
       const path = tab === "own" ? "/api/documents" : "/api/documents/pending";
-      const qs = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
-      if (q) qs.set("q", q);
-      if (status) qs.set("status", status);
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
+      const qs = buildFilterParams();
+      qs.set("page", String(page));
+      qs.set("limit", String(LIMIT));
       const data = await apiGet<DocumentListResponse>(`${path}?${qs.toString()}`);
       setDocuments(data.items);
       setTotal(data.total);
     } finally {
       setLoading(false);
     }
-  }, [tab, q, status, from, to, page]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, q, status, from, to, creator, approvedBy, approvedFrom, approvedTo, page]);
 
   useEffect(() => {
     fetchList();
@@ -128,7 +149,7 @@ export function DocumentListPage() {
 
   const canCreate = user?.role.permissions.includes("document:create") ?? false;
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
-  const hasFilters = q || status || from || to;
+  const hasFilters = q || status || from || to || creator || approvedBy || approvedFrom || approvedTo;
 
   return (
     <div>
@@ -193,9 +214,46 @@ export function DocumentListPage() {
             </option>
           ))}
         </Select>
+        <span className="list-filters__label">Ngày nộp</span>
         <Input type="date" value={from} onChange={(e) => updateFilter({ from: e.target.value })} />
         <span className="list-filters__sep">–</span>
         <Input type="date" value={to} onChange={(e) => updateFilter({ to: e.target.value })} />
+      </div>
+
+      {/* Bộ lọc theo người: người nộp (chỉ tab Chờ tôi duyệt — tab Của tôi toàn văn bản
+          của mình) + lần duyệt của một người cụ thể trong khoảng ngày (query DocumentLog). */}
+      <div className="list-filters">
+        {tab === "pending" && (
+          <div className="list-filters__search">
+            <Search size={16} />
+            <input
+              className="input list-filters__search-input"
+              value={creator}
+              onChange={(e) => updateFilter({ creator: e.target.value })}
+              placeholder="Tìm theo tên người nộp..."
+            />
+          </div>
+        )}
+        <Select value={approvedBy} onChange={(e) => updateFilter({ approvedBy: e.target.value })}>
+          <option value="">Đã duyệt bởi — bất kỳ ai</option>
+          {userOptions.map((u) => (
+            <option key={u.id} value={u.id}>
+              Đã duyệt bởi: {u.fullName}
+            </option>
+          ))}
+        </Select>
+        <span className="list-filters__label">Ngày duyệt</span>
+        <Input
+          type="date"
+          value={approvedFrom}
+          onChange={(e) => updateFilter({ approvedFrom: e.target.value })}
+        />
+        <span className="list-filters__sep">–</span>
+        <Input
+          type="date"
+          value={approvedTo}
+          onChange={(e) => updateFilter({ approvedTo: e.target.value })}
+        />
       </div>
 
       {loading ? (

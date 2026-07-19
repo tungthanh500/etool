@@ -93,6 +93,20 @@ export const ROLE_TONES: Record<string, Tone> = {
   Accountant: "success",
 };
 
+// Nhãn tiếng Việt cho catalog permission (PERMISSION_KEYS trong @etool/shared) —
+// dùng ở trang Vai trò & quyền. 3 quyền "document:approve:*" chỉ điều khiển hiển thị
+// thẻ Uỷ quyền/Chữ ký (quyền duyệt thật đến từ vị trí trong luồng duyệt).
+export const PERMISSION_LABELS: Record<string, string> = {
+  "document:create": "Tạo văn bản",
+  "document:read:own": "Xem văn bản của mình",
+  "document:approve:dept": "Người duyệt cấp phòng (hiện thẻ Uỷ quyền/Chữ ký)",
+  "document:approve:final": "Người duyệt cấp cuối (hiện thẻ Uỷ quyền/Chữ ký)",
+  "document:approve:payment": "Người duyệt thanh toán (hiện thẻ Uỷ quyền/Chữ ký)",
+  "user:manage": "Quản lý user & vai trò",
+  "workflow:manage": "Quản lý luồng duyệt",
+  "audit:read": "Xem nhật ký hệ thống",
+};
+
 export function roleLabel(r: string): string {
   return ROLE_LABELS[r] ?? r;
 }
@@ -180,6 +194,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   DEPT_CREATE: "Tạo phòng ban",
   DEPT_UPDATE: "Sửa phòng ban",
   DEPT_DELETE: "Xoá phòng ban",
+  ROLE_CREATE: "Tạo vai trò",
+  ROLE_UPDATE: "Sửa vai trò",
+  ROLE_DELETE: "Xoá vai trò",
   SIGNATURE_SET: "Cập nhật chữ ký mẫu",
   SIGNATURE_CLEAR: "Xoá chữ ký mẫu",
   PASSWORD_CHANGE: "Đổi mật khẩu",

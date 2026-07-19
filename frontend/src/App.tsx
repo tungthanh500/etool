@@ -12,6 +12,7 @@ import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 import { UserListPage } from "./pages/UserListPage";
 import { UserFormPage } from "./pages/UserFormPage";
 import { DepartmentListPage } from "./pages/DepartmentListPage";
+import { RoleListPage } from "./pages/RoleListPage";
 import { WorkflowListPage } from "./pages/WorkflowListPage";
 import { WorkflowFormPage } from "./pages/WorkflowFormPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
@@ -42,6 +43,7 @@ function App() {
                 <Route path="/users/new" element={<UserFormPage />} />
                 <Route path="/users/:id/edit" element={<UserFormPage />} />
                 <Route path="/departments" element={<DepartmentListPage />} />
+                <Route path="/roles" element={<RoleListPage />} />
                 <Route path="/workflows" element={<WorkflowListPage />} />
                 <Route path="/workflows/new" element={<WorkflowFormPage />} />
                 <Route path="/workflows/:id/edit" element={<WorkflowFormPage />} />

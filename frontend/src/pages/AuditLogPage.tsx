@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 import { ScrollText, ChevronLeft, ChevronRight } from "lucide-react";
-import { apiGet } from "../api/client";
+import { apiGet, ApiError } from "../api/client";
 import {
   Avatar,
   Badge,
   Button,
   EmptyState,
   Field,
+  ForbiddenState,
   PageHeader,
   Select,
   SkeletonRows,
 } from "../components/ui";
+import { useAuth } from "../context/AuthContext";
+import { can } from "../lib/permissions";
 import {
   auditActionLabel,
   auditCategoryLabel,
@@ -23,13 +26,20 @@ import type { AuditLog, AuditLogPage as AuditLogPageData } from "../types";
 const LIMIT = 50;
 
 export function AuditLogPage() {
+  const { user } = useAuth();
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [category, setCategory] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [forbidden, setForbidden] = useState(false);
+
+  // Gate client-side chỉ để hiển thị đúng thông báo — backend vẫn là nguồn sự thật
+  // (authorize("audit:read") trên /api/audit); 403 giữa phiên cũng bắt ở .catch dưới.
+  const allowed = can(user, "audit:read");
 
   useEffect(() => {
+    if (!allowed) return;
     setLoading(true);
     const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
     if (category) params.set("category", category);
@@ -38,8 +48,20 @@ export function AuditLogPage() {
         setLogs(data.items);
         setTotal(data.total);
       })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 403) setForbidden(true);
+      })
       .finally(() => setLoading(false));
-  }, [category, page]);
+  }, [category, page, allowed]);
+
+  if (!allowed || forbidden) {
+    return (
+      <div>
+        <PageHeader title="Nhật ký hệ thống" />
+        <ForbiddenState />
+      </div>
+    );
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
 

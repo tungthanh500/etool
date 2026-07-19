@@ -148,6 +148,11 @@
 .list-filters__sep {
   color: var(--text-muted);
 }
+.list-filters__label {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
 
 /* ---------------- Dashboard ---------------- */
 .stat-grid {
@@ -572,6 +577,25 @@
 }
 .comment-box .textarea {
   flex: 1;
+}
+
+/* ---------------- Checkbox row (trang Vai trò & quyền) ---------------- */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-base);
+  color: var(--text-body);
+  cursor: pointer;
+}
+.checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.checkbox-row input[type="checkbox"]:disabled + * ,
+.checkbox-row:has(input:disabled) {
+  color: var(--text-muted);
 }
 
 /* ---------------- Form layout ---------------- */

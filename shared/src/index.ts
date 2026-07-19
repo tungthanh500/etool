@@ -74,3 +74,21 @@ export interface NoneFormPreview {
 }
 
 export type FormPreviewResult = LeaveFormPreview | PaymentFormPreview | NoneFormPreview;
+
+// --- Catalog permission của hệ thống ---
+// Nguồn duy nhất cho UI checkbox (trang Vai trò & quyền, frontend) và validate đầu vào
+// role (backend). "*" (toàn quyền) xử lý riêng, không nằm trong list.
+// LƯU Ý NGHIỆP VỤ: quyền DUYỆT thực tế đến từ vị trí trong luồng duyệt (WorkflowStep),
+// không phải từ role — 3 permission "document:approve:*" chỉ điều khiển hiển thị thẻ
+// Uỷ quyền/Chữ ký mẫu ở frontend (canApproveAnything), không cấp quyền duyệt hồ sơ.
+export const PERMISSION_KEYS = [
+  "document:create",
+  "document:read:own",
+  "document:approve:dept",
+  "document:approve:final",
+  "document:approve:payment",
+  "user:manage",
+  "workflow:manage",
+  "audit:read",
+] as const;
+export type PermissionKey = (typeof PERMISSION_KEYS)[number];

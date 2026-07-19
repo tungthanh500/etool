@@ -24,6 +24,24 @@ const SAFE_USER_SELECT = {
   department: true,
 } as const;
 
+// Danh sách rút gọn {id, fullName} cho các ô chọn người (vd. bộ lọc "đã duyệt bởi" ở
+// danh sách văn bản) — mọi user đăng nhập đều gọi được, KHÔNG cần user:manage: tên
+// người dùng vốn đã hiển thị công khai trong timeline hồ sơ, không lộ thêm thông tin.
+// Phải khai báo TRƯỚC router.use(authorize) bên dưới để không bị gate Admin chặn.
+router.get("/options", authenticate, async (_req, res, next) => {
+  try {
+    res.json(
+      await prisma.user.findMany({
+        where: { isActive: true },
+        select: { id: true, fullName: true },
+        orderBy: { fullName: "asc" },
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.use(authenticate, authorize("user:manage"));
 
 // Tên đăng nhập: 3-32 ký tự, chữ thường/số/dấu chấm/gạch dưới/gạch nối, bắt đầu bằng chữ/số.

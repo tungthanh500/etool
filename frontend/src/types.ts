@@ -7,6 +7,8 @@ export interface Role {
   id: string;
   name: string;
   permissions: string[];
+  // GET /api/roles trả kèm số user đang giữ role (trang Vai trò & quyền).
+  _count?: { users: number };
 }
 
 export interface Department {

@@ -82,6 +82,36 @@ function parseListQuery(req: import("express").Request, extraWhere: Prisma.Docum
     };
   }
 
+  // Tìm theo tên người nộp — hữu ích ở tab "Chờ tôi duyệt" (route "/" luôn ép
+  // creatorId = chính mình nên filter này ở đó không có tác dụng thêm, chấp nhận).
+  const creator = typeof req.query.creator === "string" ? req.query.creator.trim() : "";
+  if (creator) {
+    where.creator = { fullName: { contains: creator, mode: "insensitive" } };
+  }
+
+  // Lọc theo lần duyệt trong DocumentLog: approvedBy (userId) và/hoặc khoảng ngày duyệt.
+  // Chỉ ngày → "có người duyệt trong khoảng đó"; chỉ người → "người đó đã từng duyệt";
+  // cả hai → "người đó duyệt trong khoảng đó". Khác from/to ở trên (ngày NỘP, createdAt).
+  const approvedBy = typeof req.query.approvedBy === "string" ? req.query.approvedBy.trim() : "";
+  const approvedFrom = typeof req.query.approvedFrom === "string" ? req.query.approvedFrom : undefined;
+  const approvedTo = typeof req.query.approvedTo === "string" ? req.query.approvedTo : undefined;
+  if (approvedBy || approvedFrom || approvedTo) {
+    where.logs = {
+      some: {
+        action: "APPROVE",
+        ...(approvedBy ? { userId: approvedBy } : {}),
+        ...(approvedFrom || approvedTo
+          ? {
+              createdAt: {
+                ...(approvedFrom ? { gte: dayStartVN(approvedFrom) } : {}),
+                ...(approvedTo ? { lte: dayEndVN(approvedTo) } : {}),
+              },
+            }
+          : {}),
+      },
+    };
+  }
+
   return { page, limit, where };
 }
 
