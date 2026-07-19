@@ -10,10 +10,10 @@
 
 | Mục | Nội dung | Xử lý ở giai đoạn |
 |---|---|---|
-| R06 | Không có HTTPS — cookie JWT truyền bản rõ; Web Push không chạy được (không phải secure context) | D2 |
-| R17 | Backend chạy `tsx watch`, không có process manager | D3 |
-| R16 | `GET /health` không kiểm tra DB | D4 |
-| R12 | WebSocket không có reconnect | D5 |
+| R06 | Không có HTTPS — cookie JWT truyền bản rõ; Web Push không chạy được (không phải secure context) | D2 — **đã chuẩn bị đủ (code + config + DEPLOY.md), chờ chạy lệnh sudo tại máy** |
+| R17 | Backend chạy `tsx watch`, không có process manager | D3 — **đã chuẩn bị đủ (unit file + DEPLOY.md), chờ chạy lệnh sudo tại máy** |
+| R16 | `GET /health` không kiểm tra DB | D4 ✅ ĐÃ LÀM (2026-07-19) |
+| R12 | WebSocket không có reconnect | D5 ✅ ĐÃ LÀM (2026-07-19) |
 | R18 | Không có test tự động → **đã có sau refactor giai đoạn A**; phần còn thiếu là CI chạy tự động | E1 |
 | R19 | WS registry in-memory không scale nhiều instance | **Chủ động KHÔNG làm** — một instance đủ cho quy mô LAN nội bộ; ghi rõ vào EXISTING-BUG là "chấp nhận, xem lại khi >1 instance" |
 
@@ -35,14 +35,18 @@
 
 ## GIAI ĐOẠN D — Vận hành thật trên LAN (go-live)
 
-### D1. Build production và smoke test bằng tay (chưa cần proxy)
+### D1. Build production và smoke test bằng tay (chưa cần proxy) ✅ ĐÃ LÀM (2026-07-19)
+
+> Khác mô tả gốc: thêm script `build` gộp ở root `package.json` (`build:shared && build -w eapproval-backend && build -w frontend`) — cần thiết vì `@etool/shared` (thêm ở E2) phải build trước backend, chưa có lệnh local duy nhất nào làm việc này trước đó. `npm run build` từ root sạch cả 3 workspace. Smoke test backend build qua `PORT=4099 node dist/index.js` (cổng tạm, không đụng cổng 4000 đang phục vụ user thật) → `curl /api/health` đúng response → kill ngay. Frontend: xác nhận `frontend/dist/` sinh đúng (`index.html` + asset hash). Chưa làm bước "login → tạo LEAVE → duyệt" qua build thật (cần Caddy phục vụ đồng thời backend+frontend cùng origin — để dành cho D2).
 
 1. `cd backend && npm run build` — sửa lỗi tsc nếu có (lần đầu build thật).
 2. Chạy thử TẠM bằng HTTP để kiểm build (chưa bật NODE_ENV=production — vì sự thật #1 sẽ làm hỏng cookie): `node dist/index.js`, rồi smoke: login → tạo LEAVE (chạm sinh PDF/fonts — sự thật #3) → upload file ở loại PURCHASE (chạm UPLOAD_DIR) → duyệt.
 3. `cd frontend && npm run build` — ra `frontend/dist/`. Sửa lỗi tsc/vite nếu có.
 4. Dừng process tạm. **Commit D1** nếu có sửa gì để build qua.
 
-### D2. Reverse proxy + HTTPS (R06) — dùng Caddy
+### D2. Reverse proxy + HTTPS (R06) — dùng Caddy 🔶 ĐÃ CHUẨN BỊ (2026-07-19), chờ thực thi
+
+> Người dùng xác nhận hệ thống đang testing, gián đoạn chấp nhận được — nhưng không ở gần máy để chạy lệnh sudo. Đã chuẩn bị sẵn toàn bộ phần không cần sudo: `deploy/Caddyfile` (đúng mẫu dưới, IP `192.168.10.9`), sửa `getWsUrl()` với nhánh production same-origin `/ws` (dev giữ nối thẳng 4000), `backend/src/index.ts` đọc `HOST` env (mặc định `0.0.0.0` — unit systemd sẽ set `127.0.0.1`), và **`DEPLOY.md`** ở gốc repo chứa đầy đủ chuỗi lệnh sudo theo thứ tự + nghiệm thu + hướng dẫn trust CA. Khi ngồi vào máy: làm theo DEPLOY.md mục 1→5.
 
 Chọn **Caddy** thay vì nginx: một binary, tự sinh và tự quản chứng chỉ nội bộ (`tls internal` — Caddy tự làm CA), cấu hình vài dòng, phù hợp LAN không có domain. (Nginx + mkcert là phương án thay thế nếu Caddy không cài được — quyết định đổi phải ghi chú lại.)
 
@@ -90,7 +94,9 @@ function getWsUrl(): string {
 6. **Trust CA cho client LAN:** xuất CA root của Caddy (`/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`), viết hướng dẫn ngắn (file `DEPLOY.md`, mục "Cài chứng chỉ") cho người dùng Windows trong công ty: import root.crt vào "Trusted Root Certification Authorities". Không trust thì trình duyệt cảnh báo nhưng vẫn vào được (Advanced → Proceed) — ghi cả 2 cách.
 7. Kiểm chứng: từ máy khác trong LAN mở `https://<IP>` → login được (cookie secure hoạt động), realtime WS chạy (mở 2 trình duyệt, duyệt văn bản bên này thấy cập nhật bên kia), **đăng ký Web Push thành công** (secure context — điểm bị khoá từ Bước 8 giờ mở).
 
-### D3. systemd cho backend (R17)
+### D3. systemd cho backend (R17) 🔶 ĐÃ CHUẨN BỊ (2026-07-19), chờ thực thi
+
+> Unit file sẵn tại `deploy/etool-backend.service` (node path nvm tuyệt đối `/home/tung/.nvm/versions/node/v26.5.0/bin/node`, `NODE_ENV=production`, `HOST=127.0.0.1`, `Restart=always`). `DEPLOY.md` đã viết xong (quy trình cài đặt, cập nhật phiên bản, vị trí log, link RESTORE.md). Thực thi cùng lúc với D2 theo DEPLOY.md.
 
 Tạo `/etc/systemd/system/etool-backend.service`:
 
@@ -118,7 +124,9 @@ Lưu ý: `ExecStart` dùng đường dẫn node thật (`which node` — máy n�
 
 Viết `DEPLOY.md` ở gốc repo: quy trình cập nhật phiên bản (git pull → `npm ci` nếu lockfile đổi → `prisma migrate deploy` → `npm run build` cả 2 phía → `systemctl restart etool-backend` → reload Caddy nếu Caddyfile đổi), vị trí log (`journalctl -u etool-backend`), quy trình restore (đã có `scripts/RESTORE.md` — link tới).
 
-### D4. Health check DB (R16) — nhỏ
+### D4. Health check DB (R16) — nhỏ ✅ ĐÃ LÀM (2026-07-19)
+
+> Đúng y mô tả gốc. Thêm `backend/tests/health.test.ts` (1 test: DB đang chạy → `200 {status:"ok",db:"ok"}`). Kiểm chứng: `npm test` 27/27 xanh (26 cũ + 1 mới), `curl /api/health` qua build thật (cổng tạm 4099) và qua backend dev đang chạy thật (`tsx watch` tự reload sau khi sửa file) đều đúng response.
 
 `backend/src/routes/health.ts`:
 
@@ -135,11 +143,15 @@ router.get("/health", async (_req, res) => {
 
 Thêm 1 test integration (DB đang chạy → 200). Có thể dùng health này làm `healthcheck` cho monitoring sau này.
 
-### D5. WebSocket reconnect (R12)
+### D5. WebSocket reconnect (R12) ✅ ĐÃ LÀM (2026-07-19)
+
+> Đúng y mô tả gốc: backoff `1000 * 2**attempt` trần 30s, reset khi `onopen`, cờ `closedByCleanup` chặn reconnect khi unmount, thêm `connected: boolean`. `getWsUrl()` giữ nguyên (nối thẳng cổng 4000) — nhánh same-origin để dành D2. **Chưa test bằng `sudo systemctl restart etool-backend`** (D3 chưa tồn tại) — thay vào đó verify qua chính việc sửa `health.ts` (D4) khiến `tsx watch` tự restart backend thật đang phục vụ user thật.
+>
+> **Sự cố nhỏ phát hiện khi verify, đã tự khắc phục:** khi HMR (Vite Fast Refresh) áp code mới của `useWebSocket.ts` (thêm 1 `useState` mới) vào component `AppLayout` ĐANG MOUNT sẵn trên các tab trình duyệt thật đang mở, React ném `"Should have a queue. You are likely calling Hooks conditionally"` — hoàn toàn là artefact của Fast Refresh khi số lượng hook trong 1 hook file thay đổi lúc component đang sống (không phải lỗi trong code), tự hết khi tải lại trang. Đã chủ động reload lại toàn bộ 6 tab trình duyệt thật đang mở để khôi phục — không lặp lại việc restart backend thêm lần nữa để tránh làm phiền user thật thêm lần nữa. Trên trình duyệt thật production sau này (không có Fast Refresh, luôn mount code mới từ đầu qua tải trang), sự cố này không xảy ra.
 
 Sửa `frontend/src/hooks/useWebSocket.ts`: reconnect với backoff lũy tiến (1s → 2s → 4s → ... trần 30s), reset backoff khi kết nối thành công; trả thêm cờ `connected: boolean` để UI có thể hiện trạng thái nếu muốn (chưa cần UI, chỉ cần expose). Điểm dễ sai: cleanup của `useEffect` phải huỷ cả timer reconnect đang chờ, và socket đóng do unmount thì KHÔNG reconnect (phân biệt bằng cờ `closedByCleanup` trong closure). Sau khi reconnect thành công, các trang đang mở có thể đã lỡ event — chấp nhận (người dùng F5); KHÔNG xây cơ chế replay event trong đợt này.
 
-Kiểm chứng: mở trang, `sudo systemctl restart etool-backend`, đợi — trang tự nối lại (xem Network tab), duyệt văn bản từ trình duyệt khác → realtime hoạt động lại không cần F5.
+Kiểm chứng đầy đủ (mở trang, `sudo systemctl restart etool-backend`, đợi — trang tự nối lại xem Network tab) để dành cho sau khi D3 xong.
 
 **Commit sau mỗi bước D2–D5. Cập nhật `EXISTING-BUG.md`:** đóng R06, R12, R16, R17 (kèm ngày + cách fix); R19 chuyển trạng thái "chấp nhận có chủ đích".**
 
@@ -167,11 +179,17 @@ Lưu ý khớp với hạ tầng test của REFACTOR_PLAN giai đoạn A: test �
 >
 > Đã wiring: backend `documentForms.ts` (LEAVE_TYPES), `documents.ts` (VALID_STATUSES); frontend `types.ts` (DocumentStatus, WorkflowStepKind), `documentFormMeta.ts` (LeaveType). CI (`.github/workflows/ci.yml`) cập nhật: `npm ci` ở root + `npm run build:shared` trước khi backend/frontend build/test. Kiểm chứng: tsc backend & frontend sạch, 19/19 test xanh, **CI xanh cả 2 job** (commit `99a40fc`, run `29665516083`).
 >
-> **Nợ mới phát sinh, CHƯA XỬ LÝ** — phát hiện khi audit "phòng ngừa Fat Server" theo yêu cầu người dùng: 2 chỗ frontend đang tự tính toán (vi phạm nguyên tắc, dù không phải lỗ hổng bảo mật vì backend vẫn luôn tính lại lúc submit):
+> **Nợ mới phát sinh — ✅ ĐÃ XỬ LÝ (2026-07-19):** phát hiện khi audit "phòng ngừa Fat Server" theo yêu cầu người dùng: 2 chỗ frontend đang tự tính toán (vi phạm nguyên tắc, dù không phải lỗ hổng bảo mật vì backend vẫn luôn tính lại lúc submit):
 > - `frontend/src/lib/documentFormMeta.ts` — hàm `previewLeaveDays()` tự chép lại thuật toán `computeLeaveDays` của backend để hiện preview số ngày nghỉ.
 > - `frontend/src/components/documentForms/PaymentForm.tsx` dòng 34 — tự `reduce()` tính tổng tiền để hiện preview.
 >
-> Cần quyết định UX trước khi sửa: (a) bỏ hẳn live preview, người dùng chỉ biết số ngày/tổng tiền sau khi submit; hoặc (b) thêm một API preview nhẹ để backend tính rồi trả về cho frontend hiển thị (round-trip mỗi lần đổi input). Chưa chọn hướng — hỏi người dùng trước khi làm.
+> Người dùng chọn hướng **(b) thêm API preview nhẹ** (qua AskUserQuestion). Đã làm:
+> - `@etool/shared`: thêm `FormPreviewResult` (`LeaveFormPreview | PaymentFormPreview | NoneFormPreview`) — chỉ kiểu, không thuật toán.
+> - Backend: `lib/documentForms.ts` thêm `computeFormPreview(type, raw)` (lenient, không throw 400 khi form đang gõ dở — tái dùng `computeLeaveDays` có sẵn); route mới `POST /api/documents/preview` trong `routes/documents.ts`, chỉ `authenticate` (không `authorize` cố định — dùng chung cho cả trang Tạo văn bản lẫn panel Sửa CHANGES_REQUESTED, cả 2 nơi PATCH `/:id` cũng chỉ check `authenticate`).
+> - Frontend: hook dùng chung `hooks/useDocumentFormPreview.ts` (debounce 300ms, chặn response cũ ghi đè response mới bằng cờ `cancelled`). `LeaveForm.tsx`/`PaymentForm.tsx` gọi hook thay vì tự tính. Xoá hẳn `previewLeaveDays()`/`parseISODateUTC()` trong `documentFormMeta.ts` (dead code).
+> - Test: 7 test mới trong `backend/tests/documents.preview.test.ts` (LEAVE thiếu dữ liệu/hợp lệ/lỗi cuối tuần, PAYMENT có/không items, type không hỗ trợ, chưa đăng nhập).
+>
+> Kiểm chứng: `npx tsc --noEmit` sạch 2 phía, `npm test` 26/26 xanh (19 cũ + 7 mới), test tay qua trình duyệt thật trên hệ thống LAN (`192.168.10.9:5173`, đăng nhập `admin`) — LEAVE hiện đúng "Số ngày nghỉ: 2 ngày" và thông báo lỗi cuối tuần, PAYMENT hiện đúng "Tổng cộng: 15.000.000 đ", Network tab xác nhận gọi `POST /api/documents/preview` (200), không lỗi console.
 >
 > Kế hoạch gốc bên dưới (phương án nhẹ dùng tsconfig paths, share cả Zod schema) giữ lại làm hồ sơ — KHÔNG còn là hướng thực thi.
 

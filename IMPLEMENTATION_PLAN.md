@@ -1781,3 +1781,108 @@ Lúc thêm "Phòng Nhân sự", tôi chạy `npx tsx prisma/seed.ts` — script 
 ### Trạng thái
 - **TOÀN BỘ GIAI ĐOẠN 5 (5.1–5.6) ĐÃ HOÀN THÀNH**, kiểm thử qua UI/API thật, không còn mục nào mở.
 - Chưa commit — khối thay đổi rất lớn (Bước 11 → 37), nên cân nhắc commit sớm trước khi làm tiếp.
+
+---
+
+## Bước 38 — Nợ E2: API preview cho LEAVE/PAYMENT, đóng vi phạm Fat Server (2026-07-19)
+
+### Context
+`POST_REFACTOR_PLAN.md` mục E2 ghi nhận 2 chỗ frontend tự tính toán (vi phạm `feedback_fat_server.md`): `previewLeaveDays()` trong `documentFormMeta.ts` (chép lại `computeLeaveDays` backend) và `reduce()` tính tổng tiền trong `PaymentForm.tsx`. Người dùng chọn hướng khắc phục qua AskUserQuestion: **thêm API preview nhẹ ở backend**, frontend gọi (debounce) thay vì tự tính lại. Kế hoạch chi tiết đã lập qua Plan Mode, lưu tại `/home/tung/.claude/plans/polished-dazzling-simon.md`.
+
+### Đã làm
+- **`shared/src/index.ts`:** thêm `LeaveFormPreview`/`PaymentFormPreview`/`NoneFormPreview`/`FormPreviewResult` — chỉ kiểu, không thuật toán (đúng nguyên tắc file này).
+- **`backend/src/lib/documentForms.ts`:** thêm `computeFormPreview(type, raw)` — tái dùng `computeLeaveDays()` có sẵn, **lenient** (không throw 400 khi form đang gõ dở, khác `validateDocumentForm` dành cho submit thật): LEAVE thiếu ngày → `days:null`; PAYMENT dùng `z.coerce.number()` để chấp nhận `soTien` dạng chuỗi từ state UI mà không cần serialize trước.
+- **`backend/src/routes/documents.ts`:** route mới `POST /preview`, chỉ `authenticate` — **không** `authorize("document:create")` cố định, vì phải hoạt động cả ở panel Sửa CHANGES_REQUESTED (`PATCH /:id` cũng chỉ check `authenticate` + `creatorId` trong handler, không có authorize riêng).
+- **`frontend/src/hooks/useDocumentFormPreview.ts` (mới):** hook debounce 300ms dùng chung cho `LeaveForm`/`PaymentForm`, cờ `cancelled` trong cleanup chặn response cũ ghi đè response mới khi 2 request chồng nhau.
+- **`LeaveForm.tsx`/`PaymentForm.tsx`:** gọi hook thay vì tự tính; xoá hẳn `previewLeaveDays()`/`parseISODateUTC()` khỏi `documentFormMeta.ts` (dead code, không còn nơi nào dùng).
+- **Test:** `backend/tests/documents.preview.test.ts` (mới, 7 test) — LEAVE thiếu dữ liệu/hợp lệ (2 ngày)/lỗi cuối tuần; PAYMENT có items chuỗi lẫn số/không có items; type không hỗ trợ → `kind:"NONE"`; chưa đăng nhập → 401.
+
+### Nghiệm thu (PASS)
+- `cd backend && npx tsc --noEmit && npm test` — 26/26 xanh (19 cũ + 7 mới).
+- `cd frontend && npx tsc --noEmit` — sạch.
+- **Test tay qua trình duyệt thật** trên hệ thống LAN đang chạy thật (`http://192.168.10.9:5173`, đăng nhập `admin`, sau khi người dùng cung cấp mật khẩu thật vì session cũ đã hết hạn 8h và mật khẩu demo `ChangeMe123!` đã bị đổi trên tài khoản `admin`/`tung.bui`): gõ 03/08/2026 → 05/08/2026 (Thứ 2 → Thứ 4) vào form LEAVE → hiện đúng "Số ngày nghỉ: 2 ngày"; đổi sang 08/08/2026 → 08/08/2026 (Thứ 7) → hiện đúng lỗi "Ngày nghỉ phải là ngày làm việc (Thứ 2 - Thứ 6)"; form PAYMENT gõ "Mua laptop" + 15000000 → "Tổng cộng: 15.000.000 đ" đúng, dòng trống vẫn tự sinh. Network tab xác nhận 3 lần gọi `POST /api/documents/preview` (200), console không lỗi. Không submit văn bản nào (tránh tạo dữ liệu rác trên hệ thống thật) — thoát khỏi trang mà không lưu.
+
+### Trạng thái
+- Nợ E2 (2 điểm vi phạm Fat Server) đã đóng — xem banner cập nhật trong `POST_REFACTOR_PLAN.md` mục E2.
+- Chưa commit.
+
+---
+
+## Bước 39 — Giai đoạn D (phần an toàn): D1 build script, D4 health check DB, D5 WS reconnect (2026-07-19)
+
+### Context
+Người dùng yêu cầu tiếp tục theo `POST_REFACTOR_PLAN.md`. Giai đoạn D là go-live trên LAN (D1 build, D2 Caddy/HTTPS, D3 systemd, D4 health check, D5 WS reconnect) — nhưng hệ thống **đang chạy thật** (user thật đăng nhập qua `192.168.10.9:5173`/`:4000`). Khảo sát trước khi làm xác nhận: sudo trên máy cần mật khẩu (không passwordless) → không tự chạy được lệnh cài Caddy/systemd; bật HTTPS+production (D2) sẽ ngắt mọi phiên đang đăng nhập. Đã hỏi người dùng qua AskUserQuestion — chọn **chỉ làm phần an toàn D1/D4/D5** trong lượt này, hoãn D2/D3 (cần sudo + cửa sổ bảo trì) sang lượt khác do người dùng chọn thời điểm. Kế hoạch chi tiết lập qua Plan Mode, lưu tại `/home/tung/.claude/plans/polished-dazzling-simon.md`.
+
+### Đã làm
+- **D1:** root `package.json` thêm script `"build": "npm run build:shared && npm run build -w eapproval-backend && npm run build -w frontend"` — trước đó chưa có lệnh local nào build đúng thứ tự shared→backend→frontend (CI làm thủ công theo từng step riêng, chưa có script gộp). Smoke test qua cổng tạm `PORT=4099 node dist/index.js` (không đụng cổng 4000 đang phục vụ thật) → `curl /api/health` đúng response → kill ngay.
+- **D4:** `backend/src/routes/health.ts` thêm `prisma.$queryRaw\`SELECT 1\`` — 200 `{status:"ok",db:"ok"}` khi DB sống, 503 `{status:"degraded",db:"unreachable"}` khi không kết nối được. Test mới `backend/tests/health.test.ts`.
+- **D5:** viết lại `frontend/src/hooks/useWebSocket.ts` — reconnect backoff `1000 * 2**attempt` trần 30s, reset khi `onopen`, cờ `closedByCleanup` trong closure chặn lên lịch reconnect khi cleanup do unmount (không phải mất kết nối ngoài ý muốn), thêm field `connected: boolean`. `getWsUrl()` giữ nguyên (nối thẳng cổng 4000 — nhánh same-origin để dành D2). 3 nơi gọi hook (`AppLayout`, `DocumentListPage`, `DocumentDetailPage`) không cần sửa (chỉ destructure `lastEvent`).
+
+### Sự cố nhỏ giữa chừng — đã tự khắc phục
+Khi verify D5 bằng cách quan sát tsx watch tự restart backend (do sửa `health.ts`), Vite Fast Refresh áp code `useWebSocket.ts` mới (thêm 1 `useState`) vào `AppLayout` **đang mount sẵn** trên 6 tab trình duyệt thật đang mở → React ném lỗi `"Should have a queue. You are likely calling Hooks conditionally"` (artefact chuẩn của Fast Refresh khi số hook trong 1 file thay đổi lúc component đang sống, không phải lỗi trong code). Đã chủ động `navigate` reload lại cả 6 tab để khôi phục ngay — xác nhận trang chạy bình thường sau reload. Không lặp lại việc kích hoạt restart backend lần nữa để tránh làm phiền thêm; trên trình duyệt thật (luôn tải trang mới từ đầu, không có Fast Refresh) sự cố này không xảy ra.
+
+### Nghiệm thu (PASS)
+- `npm run build` (root) — sạch cả 3 workspace (shared/backend/frontend).
+- `cd backend && npx tsc --noEmit && npm test` — 27/27 xanh (26 cũ + 1 `health.test.ts` mới).
+- `cd frontend && npx tsc --noEmit` — sạch.
+- Smoke test build thật qua cổng tạm 4099 → đúng response, đã kill.
+- `curl` backend dev đang chạy thật (đã tự reload qua tsx watch) → `/api/health` trả đúng `{"status":"ok","db":"ok"}`.
+- D5: xác nhận qua review code + tsc sạch + tab trình duyệt thật hoạt động bình thường sau reload (không cố ý kích hoạt thêm 1 lần restart backend nữa để test reconnect trực tiếp — tránh gây phiền lần 2 cho user thật; sẽ được kiểm chứng triệt để tự nhiên khi D3 (systemd `Restart=always`) hoàn thành).
+
+### Trạng thái
+- D1, D4, D5 xong. D2 (Caddy/HTTPS) và D3 (systemd) **cố ý chưa làm** — cần sudo (máy không có passwordless sudo) + cửa sổ bảo trì (sẽ ngắt mọi phiên đang đăng nhập qua HTTP), chờ người dùng chọn thời điểm phù hợp.
+- Cập nhật banner "✅ ĐÃ LÀM" cho D1/D4/D5 trong `POST_REFACTOR_PLAN.md`.
+- Chưa commit.
+
+---
+
+## Bước 40 — Chuẩn bị sẵn D2+D3 (không cần sudo) + DEPLOY.md (2026-07-19)
+
+### Context
+Người dùng xác nhận: hệ thống đang giai đoạn testing, gián đoạn chấp nhận được — nhưng **không ở gần máy** để chạy các lệnh sudo. Vậy làm trọn phần chuẩn bị không cần sudo, để khi ngồi vào máy chỉ việc dán lệnh theo `DEPLOY.md`.
+
+### Đã làm
+- **`backend/src/index.ts`:** đọc `HOST` env, mặc định `0.0.0.0` (giữ nguyên hành vi dev hiện tại — backend dev thật tự reload qua tsx watch, xác nhận vẫn phục vụ bình thường). systemd unit sẽ set `HOST=127.0.0.1` để ép traffic qua Caddy.
+- **`frontend/src/hooks/useWebSocket.ts` — `getWsUrl()`:** thêm nhánh production `wss://<host>/ws` same-origin (qua Caddy proxy); nhánh `import.meta.env.DEV` giữ nối thẳng cổng 4000 như cũ. Đã xác nhận `lib/ws.ts` gắn WebSocketServer vào http.Server không phân biệt path → proxy `/ws` là đủ.
+- **`deploy/Caddyfile` (mới):** HTTPS `tls internal` cho `192.168.10.9`, proxy `/api/*` + `/ws` → `127.0.0.1:4000`, serve `frontend/dist` SPA fallback.
+- **`deploy/etool-backend.service` (mới):** node path nvm tuyệt đối, `NODE_ENV=production`, `HOST=127.0.0.1`, `Restart=always`, `After=docker.service`.
+- **`DEPLOY.md` (mới, gốc repo):** runbook đầy đủ — cài Caddy qua apt repo chính thức, copy config, tắt dev servers, bật systemd, nghiệm thu (health/realtime/reconnect/Web Push), hướng dẫn trust CA cho client Windows, quy trình cập nhật phiên bản (`migrate deploy`, không `migrate dev`), vị trí log, cách quay về chế độ dev.
+
+### Nghiệm thu (PASS)
+- `npx tsc --noEmit` sạch cả 2 phía; `npm run build` root sạch cả 3 workspace (frontend bundle chứa nhánh WS mới).
+- Backend dev thật (tsx watch tự reload sau khi sửa `index.ts`) vẫn phục vụ bình thường — `curl /api/health` đúng response, bind vẫn `0.0.0.0` mặc định.
+- D2/D3 phần sudo CHƯA thực thi — trạng thái ghi rõ trong `POST_REFACTOR_PLAN.md` (banner 🔶 ĐÃ CHUẨN BỊ).
+
+### Trạng thái
+- Khi người dùng ngồi vào máy: làm theo `DEPLOY.md` mục 1→5 là xong D2+D3 (ước lượng 15–30 phút).
+- Chưa commit.
+
+---
+
+## Bước 41 — Dùng thử đa vai trò toàn trình qua trình duyệt thật (2026-07-19)
+
+### Context
+Người dùng yêu cầu: "đóng vai trò là người dùng ở mọi cấp độ, dùng thử lại phần mềm". Hệ thống đang testing (0 văn bản trong DB — nền sạch). Đã diễn trọn vòng đời văn bản qua 5 vai trên trình duyệt thật (đăng nhập tuần tự từng vai, thao tác click/gõ thật): **tung.bui** (Nhân viên) → **huu.tran** (Trưởng phòng Dự án) → **admin** → **nhansu** (HR) → **thy.ly** (TP Kế toán) → **enghl** (Giám đốc) → **admin**.
+
+### Luồng đã kiểm chứng PASS end-to-end
+- **LEAVE (VB-2026-0022):** tung.bui tạo (preview "2 ngày" từ API mới, PDF `Don-xin-nghi-phep.pdf` tự sinh, tiêu đề tự sinh) → huu.tran duyệt bước 1 (modal xác nhận + ý kiến) → nhansu duyệt bước cuối → **APPROVED**, sinh thêm `Don-xin-nghi-phep-da-duyet.pdf`; render PDF ra ảnh xem bằng mắt: 1 trang, PHẦN PHÊ DUYỆT 2 cột đủ tên + giờ GMT+7 + badge ĐÃ DUYỆT.
+- **PAYMENT (VB-2026-0023, luồng 3 bước):** tung.bui tạo (2 dòng chi phí, tổng 30.000.000 đ server tính, dòng trống tự sinh không phá tổng) → huu.tran → thy.ly → enghl → **APPROVED**.
+- **GENERAL (VB-2026-0024):** huu.tran tự tạo → **auto-skip bước 1** (ONLY_CREATOR, log "Bỏ qua bước 1 — người tạo là người duyệt") → enghl **Từ chối** kèm lý do bắt buộc → REJECTED.
+- **Notification:** chuông báo số đúng theo từng vai sau mỗi hành động của vai khác.
+- **`mustChangePassword`:** sau khi admin đặt lại mật khẩu cho `nhansu`, đăng nhập bị ép redirect `/account?force=1` đổi mật khẩu mới được dùng tiếp — flow chạy đúng.
+- **RBAC UI:** menu quản trị chỉ hiện cho Admin; Giám đốc truy cập thẳng `/audit` bị backend chặn **403** đúng.
+- **Nhật ký hệ thống (admin):** ghi đầy đủ đăng nhập/đăng xuất/duyệt/từ chối kèm IP + nhóm.
+
+### 2 bug thật phát hiện và đã sửa ngay
+1. **Layout PAYMENT vẫn hẹp sau fix trước:** `PaymentForm` render `div.form-stack` LỒNG bên trong form đã nới → bảng chi phí vẫn kẹt 520px trong khi dropzone rộng. Fix: thêm `form-stack--wide` vào root div của `PaymentForm.tsx`. Verify lại trên browser: bảng trải hết chiều rộng thẻ.
+2. **Seed tạo user vi phạm chính schema hệ thống:** username `hr` (2 ký tự) < min 3 ký tự của `usernameSchema` (backend) và pattern HTML (frontend) → **Admin không thể sửa bất kỳ trường nào của user này qua UI** — form bị HTML5 validation chặn im lặng (triệu chứng ban đầu giống lỗi môi trường click, đã xác minh bằng `checkValidity()`: username invalid). Fix: (a) đổi username user thật `hr` → `nhansu` qua chính UI admin (sau khi sửa thì PATCH 200 — xác nhận click "Lưu" trước đó vẫn ăn, chỉ bị validation chặn); (b) sửa `prisma/seed.ts` dùng `nhansu` kèm comment giải thích, tránh tái diễn trên máy mới.
+
+### Nợ UX nhỏ ghi nhận (chưa sửa)
+- Trang `/audit` khi bị 403 hiển thị "Chưa có nhật ký nào" thay vì thông báo không đủ quyền (backend đúng, frontend hiển thị gây hiểu nhầm).
+- Native validation bubble (username sai pattern) hiển thị thoáng qua, dễ tưởng form "không làm gì" — cân nhắc thêm thông báo lỗi inline của app cho form user.
+
+### Ghi chú vận hành sau test
+- Tài khoản demo HR đổi định danh: username `hr` → **`nhansu`**, mật khẩu sau flow ép đổi: `NhanSu2026!` (đã báo người dùng).
+- Dọn sạch: xoá 3 văn bản test + 16 notification + 10 log + 2 attachment qua SQL, xoá 2 file PDF vật lý trong `backend/uploads/` — DB về **0 Document** như trước khi test. AuditLog giữ nguyên (là nhật ký thật của hệ thống).
+- `tsc --noEmit` sạch 2 phía sau các fix giữa chừng.
+- Chưa commit.
