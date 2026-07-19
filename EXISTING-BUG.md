@@ -17,6 +17,7 @@
 - **Cập nhật 2026-07-17 (sau khi hoàn tất toàn bộ 4 giai đoạn `ACTION_PLAN.md`):** rà soát lại từng mục **trực tiếp trên code hiện tại** (không suy từ tài liệu). Đã fix thêm: **R09 (một phần — giới hạn chấp nhận được), R10, R11, R13, R15**. **R20 đổi đánh giá: rủi ro KHÔNG còn bằng 0** vì trang quản trị Workflow (Bước 11) đã tồn tại — nâng ưu tiên P3 → P2. Còn mở: R06, R12, R14, R16, R17, R18, R19, R20. (Đã commit — xem cập nhật 2026-07-18 bên dưới.)
 - **Cập nhật 2026-07-18:** repo đã có remote GitHub (`origin`) và **đã push toàn bộ, không còn thay đổi tồn đọng**. Nhánh `main` local và `origin/main` trùng khớp tại commit `f1237da` (bao gồm cả toàn bộ Giai đoạn 5 — mục 5.1–5.6 — và fix R28). Mọi ghi chú "(chưa commit)" còn sót lại trong tài liệu này bên dưới đã lỗi thời và được sửa lại thành "(đã commit)".
 - **Cập nhật 2026-07-18 (tiếp, sau refactor + E1/E2):** Đóng R18 một phần (backend test + CI, xem `REFACTOR_PLAN.md` giai đoạn A + `POST_REFACTOR_PLAN.md` E1). Đóng R19 (chấp nhận có chủ đích). E2 (`POST_REFACTOR_PLAN.md`) hoàn tất theo hướng npm workspace + package `@etool/shared` (chỉ type/hằng số, không thuật toán — đúng nguyên tắc Fat Server/Thin Client). Phát sinh **R29** (mới, chưa fix): frontend đang tự tính toán ở 2 chỗ (`previewLeaveDays`, tổng tiền `PaymentForm`), vi phạm nguyên tắc Fat Server — cần quyết định UX trước khi sửa. Còn mở: R06, R12, R16, R17, R18 (một phần), R29.
+- **Cập nhật 2026-07-19:** Đóng **R29** (API preview `POST /api/documents/preview` + hook debounce, xem `POST_REFACTOR_PLAN.md` E2). Giai đoạn D: đóng **R16** (health check DB thật) và **R12** (WS reconnect backoff); **R06**/**R17** đã chuẩn bị sẵn toàn bộ code + config (`deploy/Caddyfile`, `deploy/etool-backend.service`, `DEPLOY.md`) nhưng CHƯA thực thi — cần sudo tại máy, người dùng hiện không có mặt. Dùng thử đa vai trò qua trình duyệt thật phát hiện + fix ngay **R30** (layout PAYMENT bó hẹp) và **R31** (seed user `hr` 2 ký tự vi phạm `usernameSchema`, Admin không sửa được qua UI); phát hiện thêm **R32** (mới, chưa fix, tech debt nhỏ): trang `/audit` hiện sai thông báo khi bị 403. Còn mở: R06, R17 (chuẩn bị sẵn), R18 (một phần), R32.
 
 ---
 
@@ -165,28 +166,36 @@
 - **Khắc phục:** khôi phục 3 workflow qua API (`PATCH /workflows`, có audit); vô hiệu hoá rồi xoá 4 user demo hồi sinh (qua API hợp lệ, có xác nhận người dùng trước khi xoá hẳn).
 - **Trạng thái:** ✅ **ĐÃ FIX TẬN GỐC — 2026-07-18 (đã commit).** `seed.ts`: bỏ hẳn 4 user demo khỏi danh sách (chỉ còn `admin` + `hr`); vòng lặp WORKFLOWS đổi sang **bỏ qua hoàn toàn** workflow đã tồn tại (không đụng description lẫn steps) — seed giờ chỉ lo khởi tạo lần đầu, không còn là "nguồn sự thật" ghi đè cấu hình môi trường đang chạy thật. **Bài học ghi lại trong code:** không giả định "seed lại vô hại" một khi hệ thống đã có dữ liệu vận hành thật.
 
-### [R29] Frontend tự tính toán — vi phạm Fat Server / Thin Client
+### [R29] ~~Frontend tự tính toán — vi phạm Fat Server / Thin Client~~
 - **Phát hiện:** 2026-07-18, khi audit toàn frontend theo yêu cầu người dùng "luôn ghi nhớ, frontend chỉ hiển thị, tất cả tính toán đều làm ở backend" (đã lưu thành ghi nhớ dài hạn `feedback_fat_server.md`).
 - **File:**
   - `frontend/src/lib/documentFormMeta.ts` — hàm `previewLeaveDays()` tự chép lại thuật toán tính số ngày nghỉ (trừ Thứ 7/CN) mà backend đã có ở `computeLeaveDays()` (`backend/src/lib/documentForms.ts`), để hiện preview trước khi submit.
   - `frontend/src/components/documentForms/PaymentForm.tsx` dòng 34 — tự `reduce()` cộng tổng tiền các dòng chi phí để hiện preview `tongTien`.
 - **Mức độ:** KHÔNG phải lỗ hổng bảo mật — backend vẫn luôn tính lại và validate độc lập lúc submit (`validateDocumentForm`), không tin dữ liệu client gửi lên. Đây là vi phạm nguyên tắc kiến trúc/nợ đồng bộ logic (2 nơi cùng một công thức, dễ lệch khi sửa 1 bên).
-- **Trạng thái:** ❌ Chưa fix — cần chọn hướng UX trước khi sửa: (a) bỏ hẳn live preview, chỉ biết số ngày/tổng tiền sau khi submit; hoặc (b) thêm API preview nhẹ để backend tính rồi trả về cho frontend hiển thị (round-trip mỗi lần đổi input). Xem `POST_REFACTOR_PLAN.md` mục E2.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-19 (đã commit).** Chọn hướng (b): `POST /api/documents/preview` (backend tính, lenient — không throw khi form đang gõ dở) + hook `useDocumentFormPreview` debounce 300ms phía frontend. Xoá hẳn `previewLeaveDays()`/`parseISODateUTC()`. Kiểm chứng qua trình duyệt thật: LEAVE hiện đúng số ngày + lỗi cuối tuần, PAYMENT hiện đúng tổng tiền.
+
+### [R30] Bảng chi phí PAYMENT bị bó hẹp trong khoảng trắng thừa
+- **Phát hiện:** 2026-07-19, người dùng chụp màn hình điện thoại báo "còn thừa nhiều không gian bên phải".
+- **Nguyên nhân:** `.form-stack` mặc định `max-width: 520px` — hợp cho form 1 tiêu đề/textarea (GENERAL/PURCHASE/LEAVE) nhưng bảng chi phí 4 cột của PAYMENT cần rộng hơn.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-19 (đã commit).** Modifier `.form-stack--wide`, áp dụng có điều kiện theo `type === "PAYMENT"` ở `CreateDocumentPage.tsx`, `DocumentDetailPage.tsx` (panel Sửa), và root của `PaymentForm.tsx`.
+
+### [R31] Seed user `hr` (2 ký tự) vi phạm chính `usernameSchema` của hệ thống
+- **Phát hiện:** 2026-07-19, khi dùng thử đa vai trò — Admin không sửa được bất kỳ trường nào của user `hr` qua UI (HTML5 pattern validation chặn im lặng, không có thông báo lỗi rõ ràng).
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-19 (đã commit).** Đổi username user thật `hr` → `nhansu` qua UI Admin; sửa `prisma/seed.ts` dùng `nhansu` kèm comment giải thích để không tái diễn trên máy mới.
+- **Nợ UX nhỏ còn lại (chưa sửa):** form user không hiện thông báo lỗi inline khi username không khớp pattern — chỉ dựa vào native validation bubble của trình duyệt, dễ hiểu nhầm là nút "không phản ứng".
 
 ---
 
-## Bảng tóm tắt theo mức ưu tiên (cập nhật 2026-07-17 — rà trực tiếp trên code)
+## Bảng tóm tắt theo mức ưu tiên (cập nhật 2026-07-19 — rà trực tiếp trên code)
 
 ### Còn mở
 
 | Mã | Hạng mục | Mức độ | Ghi chú | Ưu tiên |
 |---|---|---|---|---|
-| R06 | HTTPS / Nginx | 🟠 High | Làm lúc triển khai (cần cert/domain); cũng là điều kiện để Web Push chạy trên trình duyệt thật | **P1 — go-live** |
-| R17 | pm2/systemd process manager | 🟠 High | Đang chạy `tsx watch` + Vite dev; go-live cần build production + process manager | **P1 — go-live** |
-| R16 | Health check DB ping | 🟡 Medium | `/health` vẫn trả cứng `{status:"ok"}` | **P2** |
-| R12 | WS reconnect logic | 🟡 Medium | `useWebSocket.ts` chưa có retry/backoff — mất kết nối là im lặng tới khi F5 | **P2** |
-| R18 | Test tự động (còn thiếu test frontend) | 🔵 Tech debt | Backend integration (19 test) + CI đã có; còn thiếu test component/e2e frontend | **Một phần** |
-| R29 | Frontend tự tính toán (vi phạm Fat Server) | 🟡 Medium | `previewLeaveDays`, tổng tiền PaymentForm — cần chọn hướng UX trước khi sửa | **P2** |
+| R06 | HTTPS / Caddy | 🟠 High | 🔶 **Đã chuẩn bị sẵn** (`deploy/Caddyfile`, `DEPLOY.md`, code hỗ trợ same-origin WS) — chỉ còn chạy lệnh sudo tại máy, người dùng hiện không ở gần máy | **P1 — go-live** |
+| R17 | systemd process manager | 🟠 High | 🔶 **Đã chuẩn bị sẵn** (`deploy/etool-backend.service`) — cùng cửa sổ thao tác với R06, xem `DEPLOY.md` | **P1 — go-live** |
+| R18 | Test tự động (còn thiếu test frontend) | 🔵 Tech debt | Backend integration (27 test) + CI đã có; còn thiếu test component/e2e frontend | **Một phần** |
+| R32 | Trang `/audit` hiện sai thông báo khi bị 403 | 🔵 Tech debt | Phát hiện 2026-07-19 khi test vai Giám đốc truy cập thẳng URL — backend chặn đúng 403, nhưng frontend hiện "Chưa có nhật ký nào" thay vì báo không đủ quyền | **P3** |
 
 ### Đã fix (chi tiết + cách kiểm chứng ở từng mục phía trên)
 
@@ -215,8 +224,13 @@
 | R14 | Schema `formData` theo loại văn bản | Giai đoạn 5 mục 5.1, 2026-07-18 |
 | R20 | Guard sửa Workflow khi có doc PENDING | Giai đoạn 5 mục 5.6, 2026-07-18 |
 | R28 | `seed.ts` ghi đè dữ liệu thật khi chạy lại | Bước 36, 2026-07-18 — sự cố có thật, xem chi tiết ở mục |
+| R16 | Health check DB ping | Bước 39, 2026-07-19 |
+| R12 | WS reconnect logic | Bước 39, 2026-07-19 |
+| R29 | Frontend tự tính toán (vi phạm Fat Server) | Bước 38, 2026-07-19 — API preview + hook debounce |
+| R30 | Layout PAYMENT bó hẹp 520px | Bước 41, 2026-07-19 |
+| R31 | Seed user `hr` 2 ký tự vi phạm usernameSchema | Bước 41, 2026-07-19 |
 
-> ✅ Repo đã có remote GitHub và **đã push toàn bộ, không còn gì tồn đọng** — local `main` và `origin/main` trùng khớp tại commit `f1237da` (bao gồm cả toàn bộ Giai đoạn 5, mục 5.1–5.6).
+> ⚠️ **2026-07-19:** local `main` đang **trước `origin/main` 5 commit** (E2 preview, layout fix, D1/D4/D5, D2/D3 prep, docs) — chưa push. `git push` khi được yêu cầu.
 
 ---
 
