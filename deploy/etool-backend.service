@@ -1,0 +1,21 @@
+# systemd unit cho e-Approval backend — copy vào /etc/systemd/system/ (xem DEPLOY.md).
+# ExecStart dùng đường dẫn node TUYỆT ĐỐI (máy dùng nvm, systemd không đọc PATH của shell).
+# HOST=127.0.0.1: cổng 4000 chỉ nghe localhost — mọi traffic LAN buộc đi qua Caddy HTTPS.
+# NODE_ENV=production chỉ an toàn khi Caddy/HTTPS đã chạy (cookie secure yêu cầu HTTPS).
+
+[Unit]
+Description=eTool e-Approval backend
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=tung
+WorkingDirectory=/home/tung/etool/backend
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+ExecStart=/home/tung/.nvm/versions/node/v26.5.0/bin/node dist/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -34,7 +34,9 @@ const DEV_PASSWORD = "ChangeMe123!";
 // WORKFLOWS sang không cần đích danh (xem dưới), nhưng vẫn loại hẳn khỏi danh sách cho chắc.
 const USERS: { username: string; email: string; fullName: string; roleName: string; departmentName: string }[] = [
   { username: "admin", email: "admin@example.com", fullName: "Quản trị hệ thống", roleName: "Admin", departmentName: "Ban Giám đốc" },
-  { username: "hr", email: "hr@example.com", fullName: "Đỗ Thị Nhân Sự", roleName: "Staff", departmentName: "Phòng Nhân sự" },
+  // "nhansu" chứ không phải "hr": username phải ≥3 ký tự theo usernameSchema (routes/users.ts)
+  // — seed từng tạo "hr" 2 ký tự khiến Admin không sửa được user này qua UI (pattern chặn).
+  { username: "nhansu", email: "hr@example.com", fullName: "Đỗ Thị Nhân Sự", roleName: "Staff", departmentName: "Phòng Nhân sự" },
 ];
 
 // Mô hình bước duyệt (mục 5.6): CREATOR_DEPT_HEAD không cần thêm dữ liệu; DEPARTMENT

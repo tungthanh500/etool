@@ -1,0 +1,23 @@
+# Caddyfile cho e-Approval — copy vào /etc/caddy/Caddyfile (xem DEPLOY.md).
+# `tls internal`: Caddy tự làm CA nội bộ + tự sinh/tự gia hạn chứng chỉ cho IP LAN —
+# không cần domain công cộng. Client LAN cần trust root CA một lần (DEPLOY.md mục 4).
+
+https://192.168.10.9:443 {
+	tls internal
+
+	# API + WebSocket upgrade đều về backend 4000 (WebSocketServer của backend nhận
+	# upgrade trên mọi path nên chỉ cần route /ws tới đúng cổng là đủ).
+	handle /api/* {
+		reverse_proxy 127.0.0.1:4000
+	}
+	handle /ws {
+		reverse_proxy 127.0.0.1:4000
+	}
+
+	# Frontend build tĩnh (SPA fallback về index.html cho mọi route client-side).
+	handle {
+		root * /home/tung/etool/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+}
