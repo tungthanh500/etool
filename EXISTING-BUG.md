@@ -16,6 +16,7 @@
 - **Cập nhật 2026-07-16 (cùng ngày, Giai đoạn 0 của `ACTION_PLAN.md`):** toàn bộ **NHÓM 1** đã fix trừ R06 — **R01, R02, R03, R04, R05, R07 đã fix và kiểm chứng thật** (curl + đối chiếu DB + đối chiếu cổng mạng), xem chi tiết ở từng mục bên dưới. R06 (HTTPS) vẫn ghi nhận chờ lúc triển khai, không thuộc phạm vi code sửa được ngay. (Đã commit — xem cập nhật 2026-07-18 bên dưới.)
 - **Cập nhật 2026-07-17 (sau khi hoàn tất toàn bộ 4 giai đoạn `ACTION_PLAN.md`):** rà soát lại từng mục **trực tiếp trên code hiện tại** (không suy từ tài liệu). Đã fix thêm: **R09 (một phần — giới hạn chấp nhận được), R10, R11, R13, R15**. **R20 đổi đánh giá: rủi ro KHÔNG còn bằng 0** vì trang quản trị Workflow (Bước 11) đã tồn tại — nâng ưu tiên P3 → P2. Còn mở: R06, R12, R14, R16, R17, R18, R19, R20. (Đã commit — xem cập nhật 2026-07-18 bên dưới.)
 - **Cập nhật 2026-07-18:** repo đã có remote GitHub (`origin`) và **đã push toàn bộ, không còn thay đổi tồn đọng**. Nhánh `main` local và `origin/main` trùng khớp tại commit `f1237da` (bao gồm cả toàn bộ Giai đoạn 5 — mục 5.1–5.6 — và fix R28). Mọi ghi chú "(chưa commit)" còn sót lại trong tài liệu này bên dưới đã lỗi thời và được sửa lại thành "(đã commit)".
+- **Cập nhật 2026-07-18 (tiếp, sau refactor + E1/E2):** Đóng R18 một phần (backend test + CI, xem `REFACTOR_PLAN.md` giai đoạn A + `POST_REFACTOR_PLAN.md` E1). Đóng R19 (chấp nhận có chủ đích). E2 (`POST_REFACTOR_PLAN.md`) hoàn tất theo hướng npm workspace + package `@etool/shared` (chỉ type/hằng số, không thuật toán — đúng nguyên tắc Fat Server/Thin Client). Phát sinh **R29** (mới, chưa fix): frontend đang tự tính toán ở 2 chỗ (`previewLeaveDays`, tổng tiền `PaymentForm`), vi phạm nguyên tắc Fat Server — cần quyết định UX trước khi sửa. Còn mở: R06, R12, R16, R17, R18 (một phần), R29.
 
 ---
 
@@ -164,6 +165,14 @@
 - **Khắc phục:** khôi phục 3 workflow qua API (`PATCH /workflows`, có audit); vô hiệu hoá rồi xoá 4 user demo hồi sinh (qua API hợp lệ, có xác nhận người dùng trước khi xoá hẳn).
 - **Trạng thái:** ✅ **ĐÃ FIX TẬN GỐC — 2026-07-18 (đã commit).** `seed.ts`: bỏ hẳn 4 user demo khỏi danh sách (chỉ còn `admin` + `hr`); vòng lặp WORKFLOWS đổi sang **bỏ qua hoàn toàn** workflow đã tồn tại (không đụng description lẫn steps) — seed giờ chỉ lo khởi tạo lần đầu, không còn là "nguồn sự thật" ghi đè cấu hình môi trường đang chạy thật. **Bài học ghi lại trong code:** không giả định "seed lại vô hại" một khi hệ thống đã có dữ liệu vận hành thật.
 
+### [R29] Frontend tự tính toán — vi phạm Fat Server / Thin Client
+- **Phát hiện:** 2026-07-18, khi audit toàn frontend theo yêu cầu người dùng "luôn ghi nhớ, frontend chỉ hiển thị, tất cả tính toán đều làm ở backend" (đã lưu thành ghi nhớ dài hạn `feedback_fat_server.md`).
+- **File:**
+  - `frontend/src/lib/documentFormMeta.ts` — hàm `previewLeaveDays()` tự chép lại thuật toán tính số ngày nghỉ (trừ Thứ 7/CN) mà backend đã có ở `computeLeaveDays()` (`backend/src/lib/documentForms.ts`), để hiện preview trước khi submit.
+  - `frontend/src/components/documentForms/PaymentForm.tsx` dòng 34 — tự `reduce()` cộng tổng tiền các dòng chi phí để hiện preview `tongTien`.
+- **Mức độ:** KHÔNG phải lỗ hổng bảo mật — backend vẫn luôn tính lại và validate độc lập lúc submit (`validateDocumentForm`), không tin dữ liệu client gửi lên. Đây là vi phạm nguyên tắc kiến trúc/nợ đồng bộ logic (2 nơi cùng một công thức, dễ lệch khi sửa 1 bên).
+- **Trạng thái:** ❌ Chưa fix — cần chọn hướng UX trước khi sửa: (a) bỏ hẳn live preview, chỉ biết số ngày/tổng tiền sau khi submit; hoặc (b) thêm API preview nhẹ để backend tính rồi trả về cho frontend hiển thị (round-trip mỗi lần đổi input). Xem `POST_REFACTOR_PLAN.md` mục E2.
+
 ---
 
 ## Bảng tóm tắt theo mức ưu tiên (cập nhật 2026-07-17 — rà trực tiếp trên code)
@@ -176,7 +185,8 @@
 | R17 | pm2/systemd process manager | 🟠 High | Đang chạy `tsx watch` + Vite dev; go-live cần build production + process manager | **P1 — go-live** |
 | R16 | Health check DB ping | 🟡 Medium | `/health` vẫn trả cứng `{status:"ok"}` | **P2** |
 | R12 | WS reconnect logic | 🟡 Medium | `useWebSocket.ts` chưa có retry/backoff — mất kết nối là im lặng tới khi F5 | **P2** |
-| R18 | Test tự động (còn thiếu test frontend + CI) | 🔵 Tech debt | Backend integration đã có (19 test); còn frontend + CI (POST_REFACTOR_PLAN E1) | **Một phần** |
+| R18 | Test tự động (còn thiếu test frontend) | 🔵 Tech debt | Backend integration (19 test) + CI đã có; còn thiếu test component/e2e frontend | **Một phần** |
+| R29 | Frontend tự tính toán (vi phạm Fat Server) | 🟡 Medium | `previewLeaveDays`, tổng tiền PaymentForm — cần chọn hướng UX trước khi sửa | **P2** |
 
 ### Đã fix (chi tiết + cách kiểm chứng ở từng mục phía trên)
 

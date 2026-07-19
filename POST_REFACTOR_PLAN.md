@@ -159,9 +159,23 @@ Kiểm chứng: mở trang, `sudo systemctl restart etool-backend`, đợi — t
 
 Lưu ý khớp với hạ tầng test của REFACTOR_PLAN giai đoạn A: test đọc `.env.test` qua `tests/setup.ts` — trong CI chỉ cần tạo file `.env.test` đúng nội dung trước khi chạy; guard "URL phải chứa eapproval_test" vẫn thoả nếu đặt tên DB service là `eapproval_test`. Kiểm chứng: push một commit cố tình làm đỏ 1 test → CI đỏ → revert.
 
-### E2. Shared types frontend/backend (mục hoãn từ đánh giá cấu trúc)
+### E2. Shared types frontend/backend ✅ ĐÃ LÀM (2026-07-18) — đi hướng npm workspace đầy đủ
 
-Phương án nhẹ, không monorepo tool:
+> **Khác kế hoạch gốc bên dưới:** thay vì phương án nhẹ (tsconfig paths), người dùng chọn tường minh **npm workspace + package `@etool/shared` riêng** (lựa chọn qua AskUserQuestion — "Bản đầy đủ: dựng npm workspace"). Đã tạo `package.json` root (workspaces: shared/backend/frontend), gộp về 1 `package-lock.json`, `shared/` có `tsconfig.json`/`package.json` riêng, build bằng `npm run build:shared`.
+>
+> **Đổi khác nguyên tắc quan trọng so với kế hoạch gốc:** mục 1 bên dưới đề xuất chia sẻ CẢ schema Zod (bao gồm thuật toán validate/tính toán như `computeLeaveDays`) — **đã KHÔNG làm theo**, vì vi phạm nguyên tắc **Fat Server / Thin Client** mà người dùng nhấn mạnh giữa chừng (frontend chỉ hiển thị, mọi tính toán ở backend). `@etool/shared` cuối cùng CHỈ chứa type + hằng số (`LEAVE_TYPES`, `LeaveType`, `DOCUMENT_STATUSES`, `DocumentStatus`, `WORKFLOW_STEP_KINDS`, `WorkflowStepKind`, shape formData đã-tính-xong) — không chứa bất kỳ hàm tính toán nào. Xem ghi nhớ `feedback_fat_server.md`.
+>
+> Đã wiring: backend `documentForms.ts` (LEAVE_TYPES), `documents.ts` (VALID_STATUSES); frontend `types.ts` (DocumentStatus, WorkflowStepKind), `documentFormMeta.ts` (LeaveType). CI (`.github/workflows/ci.yml`) cập nhật: `npm ci` ở root + `npm run build:shared` trước khi backend/frontend build/test. Kiểm chứng: tsc backend & frontend sạch, 19/19 test xanh, **CI xanh cả 2 job** (commit `99a40fc`, run `29665516083`).
+>
+> **Nợ mới phát sinh, CHƯA XỬ LÝ** — phát hiện khi audit "phòng ngừa Fat Server" theo yêu cầu người dùng: 2 chỗ frontend đang tự tính toán (vi phạm nguyên tắc, dù không phải lỗ hổng bảo mật vì backend vẫn luôn tính lại lúc submit):
+> - `frontend/src/lib/documentFormMeta.ts` — hàm `previewLeaveDays()` tự chép lại thuật toán `computeLeaveDays` của backend để hiện preview số ngày nghỉ.
+> - `frontend/src/components/documentForms/PaymentForm.tsx` dòng 34 — tự `reduce()` tính tổng tiền để hiện preview.
+>
+> Cần quyết định UX trước khi sửa: (a) bỏ hẳn live preview, người dùng chỉ biết số ngày/tổng tiền sau khi submit; hoặc (b) thêm một API preview nhẹ để backend tính rồi trả về cho frontend hiển thị (round-trip mỗi lần đổi input). Chưa chọn hướng — hỏi người dùng trước khi làm.
+>
+> Kế hoạch gốc bên dưới (phương án nhẹ dùng tsconfig paths, share cả Zod schema) giữ lại làm hồ sơ — KHÔNG còn là hướng thực thi.
+
+Phương án nhẹ (KẾ HOẠCH GỐC — không dùng, xem banner ở trên), không monorepo tool:
 
 1. Tạo `shared/documentForms.ts` chứa các Zod schema theo loại văn bản + type infer (`z.infer`) — chuyển từ `backend/src/lib/documentForms.ts` sang, backend re-export từ `shared/` để không phải sửa import toàn backend.
 2. Frontend: `frontend/tsconfig.json` (hoặc `tsconfig.app.json`) thêm `"paths"` alias `@shared/*` → `../shared/*` + chỉnh `vite.config.ts` (`resolve.alias`). Thay các type chép tay trong `frontend/src/types.ts` và quy tắc trong `documentFormMeta.ts` bằng import từ shared — làm DẦN từng loại văn bản, mỗi loại một commit, tsc cả 2 phía xanh mới sang loại tiếp.
