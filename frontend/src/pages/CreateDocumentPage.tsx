@@ -117,7 +117,7 @@ export function CreateDocumentPage() {
       />
 
       <Card>
-        <form className="form-stack" onSubmit={handleSubmit}>
+        <form className={`form-stack ${type === "PAYMENT" ? "form-stack--wide" : ""}`} onSubmit={handleSubmit}>
           <DocumentFormFields
             type={type}
             title={title}

@@ -382,7 +382,7 @@ export function DocumentDetailPage() {
       {/* Chỉnh sửa nội dung khi bị yêu cầu chỉnh sửa (mục 2.1) — dùng chung form theo loại (5.1) */}
       {canEdit && editing && (
         <Card title="Chỉnh sửa văn bản" className="section-gap">
-          <div className="form-stack">
+          <div className={`form-stack ${doc.type === "PAYMENT" ? "form-stack--wide" : ""}`}>
             <DocumentFormFields
               type={doc.type}
               title={editTitle}

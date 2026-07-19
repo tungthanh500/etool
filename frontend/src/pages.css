@@ -581,6 +581,11 @@
   gap: var(--sp-5);
   max-width: 520px;
 }
+/* PAYMENT: bảng chi phí nhiều cột cần rộng hơn 1 form title+textarea thường —
+   bỏ giới hạn 520px, chỉ còn bị chặn bởi .content (1080px) như các trang khác. */
+.form-stack--wide {
+  max-width: none;
+}
 .doc-actions {
   display: flex;
   flex-wrap: wrap;
