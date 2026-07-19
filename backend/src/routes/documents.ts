@@ -17,7 +17,7 @@ import {
   isCurrentApprover,
   resolveEffectiveStep,
 } from "../lib/workflow";
-import { deriveTitle, validateDocumentForm } from "../lib/documentForms";
+import { computeFormPreview, deriveTitle, validateDocumentForm } from "../lib/documentForms";
 import { getNotifiableUserIds, notify } from "../lib/notifications";
 import { audit } from "../lib/audit";
 import { currentYearVN, dayEndVN, dayStartVN, formatDateTimeVN } from "../lib/dateUtils";
@@ -245,6 +245,21 @@ router.post(
     }
   },
 );
+
+const previewSchema = z.object({ type: z.string(), formData: z.unknown().optional() });
+
+// Không "authorize" cố định — dùng cả ở trang Tạo văn bản (document:create) lẫn panel Sửa
+// khi CHANGES_REQUESTED (PATCH /:id chỉ check authenticate + creatorId trong handler).
+// Lenient: không throw 400 khi form đang gõ dở, xem computeFormPreview.
+router.post("/preview", authenticate, (req, res, next) => {
+  try {
+    const parsed = previewSchema.safeParse(req.body);
+    if (!parsed.success) throw new AppError(400, "Dữ liệu preview không hợp lệ");
+    res.json(computeFormPreview(parsed.data.type, parsed.data.formData ?? {}));
+  } catch (err) {
+    next(err);
+  }
+});
 
 const editDocumentSchema = z.object({
   title: z.string().min(1).optional(),

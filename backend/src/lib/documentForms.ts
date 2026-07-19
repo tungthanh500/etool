@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AppError } from "./errors";
 import { LEAVE_TYPES } from "@etool/shared";
+import type { FormPreviewResult } from "@etool/shared";
 
 // Re-export contract dùng chung để phần backend còn lại import từ đây như trước.
 export { LEAVE_TYPES } from "@etool/shared";
@@ -125,6 +126,33 @@ export function deriveTitle(type: string, formData: Record<string, unknown>, cre
     return `Đề nghị thanh toán — ${String(formData.tenDuAn ?? "")}`;
   }
   return null;
+}
+
+// Preview (POST /api/documents/preview) — tính trường dẫn xuất (soNgay/tongTien) TRƯỚC
+// khi submit, lúc người dùng còn đang gõ dở nên KHÔNG throw 400 khi thiếu dữ liệu như
+// validateDocumentForm (dành cho submit thật); trả về "chưa đủ dữ liệu" bằng days:null.
+export function computeFormPreview(type: string, raw: unknown): FormPreviewResult {
+  if (type === "LEAVE") {
+    const parsed = z.object({ tuNgay: z.string().optional(), denNgay: z.string().optional() }).safeParse(raw);
+    const tuNgay = parsed.success ? parsed.data.tuNgay : undefined;
+    const denNgay = parsed.success ? parsed.data.denNgay : undefined;
+    if (!tuNgay || !denNgay) return { kind: "LEAVE", days: null };
+    try {
+      return { kind: "LEAVE", days: computeLeaveDays(tuNgay, denNgay) };
+    } catch (err) {
+      if (err instanceof AppError) return { kind: "LEAVE", days: null, error: err.message };
+      throw err;
+    }
+  }
+  if (type === "PAYMENT") {
+    const parsed = z
+      .object({ items: z.array(z.object({ soTien: z.coerce.number().optional() })).optional() })
+      .safeParse(raw);
+    const items = parsed.success ? (parsed.data.items ?? []) : [];
+    const tongTien = items.reduce((sum, i) => sum + (i.soTien ?? 0), 0);
+    return { kind: "PAYMENT", tongTien };
+  }
+  return { kind: "NONE" };
 }
 
 function shortDateVN(isoDate: string): string {

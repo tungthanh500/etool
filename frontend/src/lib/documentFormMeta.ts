@@ -75,30 +75,3 @@ export function defaultFormValue(type: string): unknown {
   return { ghiChu: "" } satisfies NoteFormValue;
 }
 
-function parseISODateUTC(dateStr: string): Date {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
-}
-
-// Bản sao thuần preview phía client của computeLeaveDays (backend) — KHÔNG throw, trả về
-// null khi chưa đủ dữ liệu hoặc không hợp lệ, để UI hiện thông báo nhẹ nhàng thay vì lỗi.
-// Server (lib/documentForms.ts) mới là nguồn xác thực cuối cùng, tính lại độc lập lúc submit.
-export function previewLeaveDays(tuNgay: string, denNgay: string): { days: number } | { error: string } | null {
-  if (!tuNgay || !denNgay) return null;
-  if (denNgay < tuNgay) return { error: "Ngày đi làm lại phải sau hoặc bằng ngày bắt đầu nghỉ" };
-  const fromDow = parseISODateUTC(tuNgay).getUTCDay();
-  if (tuNgay === denNgay) {
-    if (fromDow === 0 || fromDow === 6) return { error: "Ngày nghỉ phải là ngày làm việc (Thứ 2 - Thứ 6)" };
-    return { days: 0.5 };
-  }
-  let count = 0;
-  const cursor = parseISODateUTC(tuNgay);
-  const end = parseISODateUTC(denNgay);
-  while (cursor.getTime() < end.getTime()) {
-    const dow = cursor.getUTCDay();
-    if (dow !== 0 && dow !== 6) count += 1;
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  if (count === 0) return { error: "Khoảng ngày nghỉ không hợp lệ — không có ngày làm việc nào trong khoảng đã chọn" };
-  return { days: count };
-}

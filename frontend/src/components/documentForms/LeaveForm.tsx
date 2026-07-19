@@ -1,7 +1,7 @@
 import { Field, Input, Select, Textarea, Alert } from "../ui";
-import { previewLeaveDays } from "../../lib/documentFormMeta";
 import type { LeaveFormValue } from "../../lib/documentFormMeta";
 import { LEAVE_TYPE_LABELS } from "../../lib/labels";
+import { useDocumentFormPreview } from "../../hooks/useDocumentFormPreview";
 
 interface LeaveFormProps {
   value: LeaveFormValue;
@@ -11,7 +11,11 @@ interface LeaveFormProps {
 // Đơn xin nghỉ phép (mục 5.2): không có ô "Tiêu đề" (tự sinh ở backend từ họ tên + khoảng
 // ngày) và không có upload file (hệ thống tự sinh PDF khi nộp — xem lib/leavePdf.ts).
 export function LeaveForm({ value, onChange }: LeaveFormProps) {
-  const preview = previewLeaveDays(value.tuNgay, value.denNgay);
+  const preview = useDocumentFormPreview(
+    "LEAVE",
+    { tuNgay: value.tuNgay, denNgay: value.denNgay },
+    Boolean(value.tuNgay && value.denNgay),
+  );
 
   return (
     <div className="form-stack">
@@ -34,14 +38,14 @@ export function LeaveForm({ value, onChange }: LeaveFormProps) {
         </Field>
       </div>
 
-      {preview && (
-        "error" in preview ? (
+      {preview?.kind === "LEAVE" && (
+        preview.error ? (
           <Alert tone="danger">{preview.error}</Alert>
-        ) : (
+        ) : preview.days !== null ? (
           <Alert tone="info">
             Số ngày nghỉ: <strong>{preview.days}</strong> ngày
           </Alert>
-        )
+        ) : null
       )}
 
       <Field label="Loại nghỉ">

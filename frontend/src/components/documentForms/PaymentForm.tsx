@@ -2,6 +2,7 @@ import { Trash2 } from "lucide-react";
 import { Field, Input } from "../ui";
 import { emptyPaymentItem } from "../../lib/documentFormMeta";
 import type { PaymentFormValue, PaymentItem } from "../../lib/documentFormMeta";
+import { useDocumentFormPreview } from "../../hooks/useDocumentFormPreview";
 
 interface PaymentFormProps {
   value: PaymentFormValue;
@@ -14,6 +15,8 @@ function formatMoney(n: number): string {
 
 // Đề nghị thanh toán (mục 5.3): bảng chi phí tự sinh dòng mới khi dòng cuối có nội dung,
 // tổng cộng tự tính hiển thị ngay (server tính lại độc lập lúc submit, không tin số này).
+// Root có form-stack--wide vì bảng chi phí 4 cột cần rộng hơn 520px mặc định —
+// wrapper ngoài (CreateDocumentPage/DocumentDetailPage) cũng đã nới theo type PAYMENT.
 export function PaymentForm({ value, onChange }: PaymentFormProps) {
   function updateItem(idx: number, patch: Partial<PaymentItem>) {
     const items = value.items.map((it, i) => (i === idx ? { ...it, ...patch } : it));
@@ -31,10 +34,11 @@ export function PaymentForm({ value, onChange }: PaymentFormProps) {
     onChange({ ...value, items: items.length > 0 ? items : [emptyPaymentItem()] });
   }
 
-  const total = value.items.reduce((sum, it) => sum + (Number(it.soTien) || 0), 0);
+  const preview = useDocumentFormPreview("PAYMENT", value, true);
+  const total = preview?.kind === "PAYMENT" ? preview.tongTien : 0;
 
   return (
-    <div className="form-stack">
+    <div className="form-stack form-stack--wide">
       <Field label="Tên dự án">
         <Input
           value={value.tenDuAn}

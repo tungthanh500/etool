@@ -53,3 +53,24 @@ export interface LeaveFormData {
   lyDo?: string;
   soNgay: number; // backend tự tính (computeLeaveDays) — frontend chỉ hiển thị
 }
+
+// --- Contract cho API preview (POST /api/documents/preview) ---
+// Kết quả tính toán TRƯỚC khi submit (số ngày nghỉ, tổng tiền) — vẫn tính ở backend,
+// frontend chỉ gọi API và hiển thị, không tự chép lại thuật toán (Fat Server).
+
+export interface LeaveFormPreview {
+  kind: "LEAVE";
+  days: number | null; // null: thiếu dữ liệu hoặc không hợp lệ
+  error?: string; // có khi không hợp lệ (vd. khoảng ngày sai, rơi vào cuối tuần)
+}
+
+export interface PaymentFormPreview {
+  kind: "PAYMENT";
+  tongTien: number;
+}
+
+export interface NoneFormPreview {
+  kind: "NONE";
+}
+
+export type FormPreviewResult = LeaveFormPreview | PaymentFormPreview | NoneFormPreview;
