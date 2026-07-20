@@ -221,7 +221,7 @@ export function WorkflowFormPage() {
       />
 
       <Card>
-        <form className="form-stack" onSubmit={handleSubmit}>
+        <form className="form-stack form-stack--roomy" onSubmit={handleSubmit}>
           <Field
             label="Tên loại văn bản"
             hint={

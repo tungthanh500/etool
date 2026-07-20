@@ -1,4 +1,4 @@
-import { Field, Input, Select, Textarea, Alert } from "../ui";
+import { Field, DateInput, Select, Textarea, Alert } from "../ui";
 import type { LeaveFormValue } from "../../lib/documentFormMeta";
 import { LEAVE_TYPE_LABELS } from "../../lib/labels";
 import { useDocumentFormPreview } from "../../hooks/useDocumentFormPreview";
@@ -21,18 +21,16 @@ export function LeaveForm({ value, onChange }: LeaveFormProps) {
     <div className="form-stack">
       <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
         <Field label="Từ ngày">
-          <Input
-            type="date"
+          <DateInput
             value={value.tuNgay}
-            onChange={(e) => onChange({ ...value, tuNgay: e.target.value })}
+            onChange={(v) => onChange({ ...value, tuNgay: v })}
             required
           />
         </Field>
         <Field label="Đi làm lại ngày">
-          <Input
-            type="date"
+          <DateInput
             value={value.denNgay}
-            onChange={(e) => onChange({ ...value, denNgay: e.target.value })}
+            onChange={(v) => onChange({ ...value, denNgay: v })}
             required
           />
         </Field>

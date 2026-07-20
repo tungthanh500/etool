@@ -89,7 +89,8 @@
   display: inline-flex;
   padding: 3px;
   background: var(--bg-subtle);
-  border-radius: var(--r-md);
+  /* Material 3: segmented control bo pill */
+  border-radius: var(--r-full);
   gap: 2px;
 }
 .segmented__item {
@@ -102,7 +103,7 @@
   color: var(--text-muted);
   font-size: var(--fs-sm);
   font-weight: 500;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-full);
   transition: background var(--transition), color var(--transition);
 }
 .segmented__item:hover {
@@ -152,6 +153,22 @@
   color: var(--text-muted);
   font-size: var(--fs-sm);
   white-space: nowrap;
+}
+/* Select trong hàng lọc: rộng theo nội dung, không chiếm nguyên hàng. */
+.list-filters > .select,
+.filter-range > .select {
+  width: auto;
+  flex: 0 0 auto;
+}
+/* Nhóm "nhãn + từ ngày – đến ngày": luôn dính nhau trên cùng 1 hàng. */
+.filter-range {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: nowrap;
+}
+.filter-range .date-input {
+  width: 156px;
 }
 
 /* ---------------- Dashboard ---------------- */
@@ -610,6 +627,11 @@
 .form-stack--wide {
   max-width: none;
 }
+/* Workflow builder: 2 select (phòng ban + người duyệt) nằm cạnh nhau trong card bước
+   cần thoáng hơn 520px để không cụt chữ, nhưng chưa tới mức thả nổi toàn trang. */
+.form-stack--roomy {
+  max-width: 680px;
+}
 .doc-actions {
   display: flex;
   flex-wrap: wrap;
@@ -619,25 +641,43 @@
   margin-top: var(--sp-5);
 }
 
-/* ---------------- Workflow builder ---------------- */
+/* ---------------- Workflow builder (Material 3) ---------------- */
 /* Trình dựng flow: mỗi bước là 1 card kéo-thả, kèm sơ đồ xem trước realtime. */
 .flow-steps {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
+}
+/* Đường nối dọc chạy sau lưng các card, lộ ra ở khoảng hở giữa chúng — tạo cảm giác
+   chuỗi bước liên tục. 60px = padding card (16) + tay kéo (17) + gap (12) + nửa vòng số (16). */
+.flow-steps::before {
+  content: "";
+  position: absolute;
+  left: 60px;
+  top: var(--sp-4);
+  bottom: var(--sp-4);
+  width: 2px;
+  background: var(--border-strong);
 }
 .flow-step {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4);
+  box-shadow: var(--shadow-sm);
   transition:
     border-color var(--transition),
     box-shadow var(--transition),
     opacity var(--transition);
+}
+.flow-step:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
 }
 .flow-step.is-dragging {
   opacity: 0.4;
@@ -660,12 +700,12 @@
   cursor: grabbing;
 }
 .flow-step__num {
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: var(--primary-subtle);
   color: var(--primary);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -691,51 +731,70 @@
   flex-shrink: 0;
 }
 
-/* Sơ đồ duyệt xem trước — pipeline node + connector, dùng chung ngôn ngữ .stepper. */
+/* Sơ đồ duyệt xem trước — chuỗi chip pill (Material 3) nối bằng mũi tên.
+   Cho phép xuống dòng khi luồng dài thay vì tràn ngang phải cuộn. */
 .flow-preview {
   display: flex;
-  align-items: flex-start;
-  overflow-x: auto;
-  padding: var(--sp-2) 0;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-1);
 }
 .flow-preview__node {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
-  text-align: center;
+  gap: var(--sp-2);
   flex-shrink: 0;
-  min-width: 72px;
+  padding: 5px 14px 5px 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-full);
+  box-shadow: var(--shadow-sm);
 }
 .flow-preview__marker {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-surface);
-  border: 2px solid var(--border-strong);
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
-  font-weight: 600;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  flex: none;
 }
-.flow-preview__node--endpoint .flow-preview__marker {
+.flow-preview__node--endpoint {
   background: var(--success-subtle);
   border-color: var(--success);
-  color: var(--success);
+}
+.flow-preview__node--endpoint .flow-preview__marker {
+  background: transparent;
+  color: var(--success-text);
+}
+.flow-preview__node--endpoint .flow-preview__label {
+  color: var(--success-text);
 }
 .flow-preview__label {
-  margin-top: var(--sp-2);
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  max-width: 88px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-body);
+  white-space: nowrap;
 }
 .flow-preview__connector {
-  flex: 1;
-  min-width: 24px;
+  position: relative;
+  flex: none;
+  width: 26px;
   height: 2px;
   background: var(--border-strong);
-  margin-top: 14px;
+  margin: 0 2px;
+}
+.flow-preview__connector::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: -3px;
+  border-left: 6px solid var(--border-strong);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
 }
 .flow-preview__empty {
   font-size: var(--fs-sm);
@@ -744,30 +803,123 @@
   padding: var(--sp-2) 0;
 }
 
-/* Card danh sách flow: mini-pipeline nội tuyến thay chuỗi badge phẳng. */
-.flow-card-mini {
+/* ---------------- Danh sách luồng duyệt (Material 3) ---------------- */
+.wf-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.wf-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--sp-5);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.wf-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+.wf-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.wf-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.wf-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  background: var(--primary-subtle);
+  color: var(--primary);
+  flex: none;
+}
+.wf-card__title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-heading);
+}
+.wf-card__desc {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.wf-card__actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+/* Dải pipeline nằm trên panel inset để tách khỏi phần tiêu đề. */
+.wf-flow {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--sp-2);
-  margin-top: var(--sp-1);
+  gap: var(--sp-1);
+  row-gap: var(--sp-2);
+  margin-top: var(--sp-4);
+  padding: var(--sp-3);
+  background: var(--bg-subtle);
+  border-radius: var(--r-md);
 }
-.flow-card-mini__step {
+.wf-flow__seg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.wf-flow__arrow {
+  color: var(--text-muted);
+  flex: none;
+}
+.wf-flow__step {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  padding: 4px 14px 4px 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-full);
   font-size: var(--fs-sm);
+  font-weight: 500;
   color: var(--text-body);
+  white-space: nowrap;
 }
-.flow-card-mini__num {
-  width: 20px;
-  height: 20px;
+.wf-flow__num {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: var(--fs-xs);
+  font-weight: 700;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
+}
+.wf-flow__endpoint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  white-space: nowrap;
+}
+.wf-flow__endpoint--done {
+  background: var(--success-subtle);
+  color: var(--success-text);
 }

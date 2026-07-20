@@ -8,6 +8,7 @@ export { EmptyState } from "./EmptyState";
 export { ForbiddenState } from "./ForbiddenState";
 export { Alert } from "./Alert";
 export { Field, Input, Select, Textarea } from "./Field";
+export { DateInput } from "./DateInput";
 export { Modal, ConfirmDialog, PromptDialog } from "./Modal";
 export { PageHeader } from "./PageHeader";
 export { ToastProvider, useToast } from "./toast";

@@ -9,6 +9,7 @@ import {
   Button,
   Card,
   ConfirmDialog,
+  DateInput,
   Field,
   Input,
   PageHeader,
@@ -364,20 +365,10 @@ export function AccountPage() {
           </Field>
           <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
             <Field label="Từ ngày">
-              <Input
-                type="date"
-                value={delegateFrom}
-                onChange={(e) => setDelegateFrom(e.target.value)}
-                required
-              />
+              <DateInput value={delegateFrom} onChange={setDelegateFrom} required />
             </Field>
             <Field label="Đến hết ngày">
-              <Input
-                type="date"
-                value={delegateUntil}
-                onChange={(e) => setDelegateUntil(e.target.value)}
-                required
-              />
+              <DateInput value={delegateUntil} onChange={setDelegateUntil} required />
             </Field>
           </div>
 

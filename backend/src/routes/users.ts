@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { Prisma } from "@prisma/client";
+import { PERMISSION_KEYS } from "@etool/shared";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { hashPassword } from "../lib/password";
@@ -24,15 +25,24 @@ const SAFE_USER_SELECT = {
   department: true,
 } as const;
 
-// Danh sách rút gọn {id, fullName} cho các ô chọn người (vd. bộ lọc "đã duyệt bởi" ở
-// danh sách văn bản) — mọi user đăng nhập đều gọi được, KHÔNG cần user:manage: tên
-// người dùng vốn đã hiển thị công khai trong timeline hồ sơ, không lộ thêm thông tin.
+// Danh sách rút gọn {id, fullName} cho ô lọc "Đã duyệt bởi" ở danh sách văn bản —
+// CHỈ trả những người có quyền duyệt (role mang document:approve:* hoặc Admin "*"),
+// cùng tiêu chí với canApproveAnything phía frontend: lọc theo người không duyệt bao
+// giờ là vô nghĩa. Mọi user đăng nhập đều gọi được, KHÔNG cần user:manage: tên người
+// duyệt vốn đã hiển thị công khai trong timeline hồ sơ, không lộ thêm thông tin.
 // Phải khai báo TRƯỚC router.use(authorize) bên dưới để không bị gate Admin chặn.
 router.get("/options", authenticate, async (_req, res, next) => {
   try {
     res.json(
       await prisma.user.findMany({
-        where: { isActive: true },
+        where: {
+          isActive: true,
+          role: {
+            permissions: {
+              hasSome: ["*", ...PERMISSION_KEYS.filter((p) => p.startsWith("document:approve"))],
+            },
+          },
+        },
         select: { id: true, fullName: true },
         orderBy: { fullName: "asc" },
       }),

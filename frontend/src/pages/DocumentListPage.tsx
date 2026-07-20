@@ -7,8 +7,8 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import {
   Badge,
   Button,
+  DateInput,
   EmptyState,
-  Input,
   Select,
   SkeletonRows,
   useToast,
@@ -60,7 +60,8 @@ export function DocumentListPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
-  // Danh sách {id, fullName} cho ô "Đã duyệt bởi" — endpoint mở cho mọi user đã đăng nhập.
+  // Danh sách {id, fullName} cho ô "Đã duyệt bởi" — backend chỉ trả những người có quyền
+  // duyệt (role có document:approve:* hoặc Admin), endpoint mở cho mọi user đã đăng nhập.
   const [userOptions, setUserOptions] = useState<{ id: string; fullName: string }[]>([]);
   const { lastEvent } = useWebSocket(true);
   const { toast } = useToast();
@@ -214,10 +215,12 @@ export function DocumentListPage() {
             </option>
           ))}
         </Select>
-        <span className="list-filters__label">Ngày nộp</span>
-        <Input type="date" value={from} onChange={(e) => updateFilter({ from: e.target.value })} />
-        <span className="list-filters__sep">–</span>
-        <Input type="date" value={to} onChange={(e) => updateFilter({ to: e.target.value })} />
+        <div className="filter-range">
+          <span className="list-filters__label">Ngày nộp</span>
+          <DateInput value={from} onChange={(v) => updateFilter({ from: v })} aria-label="Ngày nộp từ ngày" />
+          <span className="list-filters__sep">–</span>
+          <DateInput value={to} onChange={(v) => updateFilter({ to: v })} aria-label="Ngày nộp đến ngày" />
+        </div>
       </div>
 
       {/* Bộ lọc theo người: người nộp (chỉ tab Chờ tôi duyệt — tab Của tôi toàn văn bản
@@ -234,26 +237,31 @@ export function DocumentListPage() {
             />
           </div>
         )}
-        <Select value={approvedBy} onChange={(e) => updateFilter({ approvedBy: e.target.value })}>
-          <option value="">Đã duyệt bởi — bất kỳ ai</option>
-          {userOptions.map((u) => (
-            <option key={u.id} value={u.id}>
-              Đã duyệt bởi: {u.fullName}
-            </option>
-          ))}
-        </Select>
-        <span className="list-filters__label">Ngày duyệt</span>
-        <Input
-          type="date"
-          value={approvedFrom}
-          onChange={(e) => updateFilter({ approvedFrom: e.target.value })}
-        />
-        <span className="list-filters__sep">–</span>
-        <Input
-          type="date"
-          value={approvedTo}
-          onChange={(e) => updateFilter({ approvedTo: e.target.value })}
-        />
+        <div className="filter-range">
+          <span className="list-filters__label">Đã duyệt bởi</span>
+          <Select value={approvedBy} onChange={(e) => updateFilter({ approvedBy: e.target.value })}>
+            <option value="">Bất kỳ ai</option>
+            {userOptions.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.fullName}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="filter-range">
+          <span className="list-filters__label">Ngày duyệt</span>
+          <DateInput
+            value={approvedFrom}
+            onChange={(v) => updateFilter({ approvedFrom: v })}
+            aria-label="Ngày duyệt từ ngày"
+          />
+          <span className="list-filters__sep">–</span>
+          <DateInput
+            value={approvedTo}
+            onChange={(v) => updateFilter({ approvedTo: v })}
+            aria-label="Ngày duyệt đến ngày"
+          />
+        </div>
       </div>
 
       {loading ? (
