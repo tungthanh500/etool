@@ -206,6 +206,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   FILE_UPLOAD: "Tải file lên",
   FILE_DOWNLOAD: "Tải file xuống",
   FILE_DELETE: "Xoá file",
+  FILE_GENERATE_FAILED: "Lỗi sinh file PDF",
   EXPORT: "Xuất Excel",
 };
 

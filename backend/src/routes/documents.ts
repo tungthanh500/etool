@@ -243,7 +243,7 @@ router.post(
       // (mục 5.2). Khu PHẦN PHÊ DUYỆT để trống/chờ, trừ bước nào vừa bị auto-skip ở trên.
       let responseDocument = document;
       if (type === "LEAVE") {
-        await generateLeavePdfAttachment(document, "ORIGINAL");
+        await generateLeavePdfAttachment(document, "ORIGINAL", req);
         responseDocument = await prisma.document.findUniqueOrThrow({
           where: { id: document.id },
           include: { ...DOCUMENT_INCLUDE, logs: LOGS_INCLUDE },

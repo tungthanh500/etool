@@ -129,7 +129,7 @@ export async function approveDocument(req: Request) {
     // LEAVE: regenerate toàn bộ PDF (khu PHẦN PHÊ DUYỆT điền đầy đủ) — không chèn
     // trang bìa/phụ lục như 2.4/2.5, xem generateLeavePdfAttachment (mục 5.2).
     if (updated.type === "LEAVE") {
-      await generateLeavePdfAttachment(updated, "APPROVED");
+      await generateLeavePdfAttachment(updated, "APPROVED", req);
     } else {
       await autoStampApprovedPdfs(req, updated);
     }
@@ -284,7 +284,7 @@ export async function resubmitDocument(req: Request) {
   let responseDoc = updated;
   if (isNowApproved) {
     if (updated.type === "LEAVE") {
-      await generateLeavePdfAttachment(updated, "APPROVED");
+      await generateLeavePdfAttachment(updated, "APPROVED", req);
     } else {
       await autoStampApprovedPdfs(req, updated);
     }

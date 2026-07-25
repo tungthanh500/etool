@@ -14,7 +14,8 @@ import { buildLeavePdf, buildLeaveStepRows } from "./leavePdf";
 // auto-skip ngay từ đầu); kind="APPROVED" lúc duyệt xong bước cuối (mọi bước đã ĐÃ DUYỆT
 // hoặc Bỏ qua, không còn "(Chưa duyệt)"). Khác autoStampApprovedPdfs (2.4/2.5): LEAVE
 // regenerate TOÀN BỘ 1 trang, không chèn trang bìa/phụ lục — đúng yêu cầu nghiệp vụ.
-// Lỗi sinh PDF KHÔNG được chặn hành động chính (nộp/duyệt) — chỉ log lại.
+// Lỗi sinh PDF KHÔNG được chặn hành động chính (nộp/duyệt) — chỉ ghi audit (để Admin thấy
+// trong Nhật ký hệ thống) thay vì chỉ console.error (không ai đọc log server production).
 export async function generateLeavePdfAttachment(
   document: {
     id: string;
@@ -25,6 +26,7 @@ export async function generateLeavePdfAttachment(
     workflow: { steps: Parameters<typeof buildLeaveStepRows>[0] };
   },
   kind: "ORIGINAL" | "APPROVED",
+  req?: import("express").Request,
 ): Promise<void> {
   try {
     const creator = await prisma.user.findUnique({
@@ -76,6 +78,14 @@ export async function generateLeavePdfAttachment(
     });
   } catch (err) {
     console.error(`Lỗi sinh PDF đơn nghỉ phép cho văn bản ${document.id}:`, err);
+    audit({
+      req,
+      category: "FILE",
+      action: "FILE_GENERATE_FAILED",
+      targetType: "document",
+      targetId: document.id,
+      detail: `Sinh PDF đơn nghỉ phép (${kind}) thất bại: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 }
 
@@ -128,5 +138,13 @@ export async function autoStampApprovedPdfs(
     }
   } catch (err) {
     console.error(`Lỗi đóng dấu PDF tự động cho văn bản ${document.id}:`, err);
+    audit({
+      req,
+      category: "FILE",
+      action: "FILE_GENERATE_FAILED",
+      targetType: "document",
+      targetId: document.id,
+      detail: `Đóng dấu PDF tự động thất bại: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 }
