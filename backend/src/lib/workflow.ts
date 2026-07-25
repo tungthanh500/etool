@@ -21,6 +21,9 @@ export function getCurrentWorkflowStep(document: DocumentWithWorkflow): Workflow
 // - CREATOR_DEPT_HEAD: người duyệt là Trưởng phòng CÙNG phòng ban với người tạo văn bản.
 // - DEPARTMENT: approverUserId có giá trị -> CHỈ đích danh người đó; NULL -> BẤT KỲ
 //   thành viên active nào của phòng departmentId.
+// Chỉ kiểm tra vị trí trong luồng — KHÔNG chặn tự duyệt ở đây, vì tham số `approver` có
+// thể là 1 delegator (không phải người đang thực hiện hành động thật). Chặn tự duyệt phải
+// dựa trên danh tính người GỌI API, xem isCurrentApprover/findActingDelegator bên dưới.
 function matchesCurrentStep(document: DocumentWithWorkflow, approver: AuthUser): boolean {
   if (document.status !== "PENDING") return false;
   const step = getCurrentWorkflowStep(document);
@@ -53,24 +56,38 @@ export async function getActiveDelegators(userId: string): Promise<AuthUser[]> {
 
 // user có phải người duyệt ở bước hiện tại không — bằng chính quyền của mình,
 // HOẶC qua bất kỳ uỷ quyền đang hiệu lực nào (nếu truyền delegators vào).
+// CHẶN TỰ DUYỆT — 2 CHIỀU:
+// (1) `user` (người ĐANG THỰC HIỆN hành động, lấy từ req.user) chính là người tạo văn bản
+//     -> chặn ngay, bất kể họ dùng quyền bản thân hay mượn quyền qua uỷ quyền.
+// (2) Người tạo văn bản NẰM TRONG danh sách delegators -> chặn luôn nhánh đó, vì người tạo
+//     có thể tự uỷ quyền (POST /api/delegations không giới hạn quan hệ) CHO một người khác
+//     rồi để người đó "duyệt thay mình" — bản chất vẫn là người tạo tự quyết định hồ sơ của
+//     mình, chỉ mượn danh tính người khác để thực hiện. Không đủ nếu chỉ chặn (1): người
+//     khác gọi API vẫn pass qua matchesCurrentStep(document, creatorAsDelegator) vì hàm đó
+//     không biết gì về creatorId, chỉ khớp vị trí trong luồng.
 export function isCurrentApprover(
   document: DocumentWithWorkflow,
   user: AuthUser,
   delegators: AuthUser[] = [],
 ): boolean {
+  if (user.id === document.creatorId) return false;
   if (matchesCurrentStep(document, user)) return true;
-  return delegators.some((d) => matchesCurrentStep(document, d));
+  return delegators.some((d) => d.id !== document.creatorId && matchesCurrentStep(document, d));
 }
 
 // Trả về người uỷ quyền mà user đang "duyệt thay" trên hồ sơ này — null nếu user
 // duyệt bằng chính quyền của mình (quyền bản thân được ưu tiên, không tính là duyệt thay).
+// Loại trừ document.creatorId khỏi danh sách tìm — dù isCurrentApprover đã chặn hành động
+// tự duyệt (nên hàm này chỉ được gọi khi thực sự có 1 delegator hợp lệ khác), vẫn giữ điều
+// kiện này ở đây để log audit không bao giờ ghi nhầm "duyệt thay uỷ quyền bởi chính người
+// tạo" khi delegators chứa nhiều người và creator vô tình khớp vị trí đứng trước người hợp lệ.
 export function findActingDelegator(
   document: DocumentWithWorkflow,
   user: AuthUser,
   delegators: AuthUser[],
 ): AuthUser | null {
   if (matchesCurrentStep(document, user)) return null;
-  return delegators.find((d) => matchesCurrentStep(document, d)) ?? null;
+  return delegators.find((d) => d.id !== document.creatorId && matchesCurrentStep(document, d)) ?? null;
 }
 
 export function canViewDocument(
