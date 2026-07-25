@@ -23,6 +23,7 @@ export function RoleListPage() {
   const toast = useToast();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [editing, setEditing] = useState<Role | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -38,12 +39,21 @@ export function RoleListPage() {
   function load() {
     setLoading(true);
     return apiGet<Role[]>("/api/roles")
-      .then(setRoles)
+      .then((data) => {
+        setRoles(data);
+        setLoadError(false);
+      })
+      .catch((err) => {
+        // Giữ nguyên danh sách cũ khi lỗi — không xoá về rỗng để tránh hiểu nhầm "chưa có vai trò nào".
+        setLoadError(true);
+        toast.error(err instanceof ApiError ? err.message : "Không tải được danh sách vai trò");
+      })
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải 1 lần lúc mount
   }, []);
 
   function openCreate() {
@@ -126,6 +136,13 @@ export function RoleListPage() {
         <div className="table-wrap">
           <SkeletonRows rows={4} cols={3} />
         </div>
+      ) : loadError && roles.length === 0 ? (
+        <Alert tone="danger">
+          Không tải được danh sách vai trò.{" "}
+          <Button variant="ghost" size="sm" onClick={load}>
+            Thử lại
+          </Button>
+        </Alert>
       ) : roles.length === 0 ? (
         <div className="card">
           <EmptyState icon={<ShieldCheck size={26} />} title="Chưa có vai trò nào" />

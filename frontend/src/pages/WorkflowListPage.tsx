@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { GitBranch, Pencil, Plus, Trash2, ChevronRight, UserPlus, FlagTriangleRight } from "lucide-react";
 import { apiDelete, apiGet, ApiError } from "../api/client";
 import {
+  Alert,
   Button,
   ConfirmDialog,
   EmptyState,
@@ -18,18 +19,27 @@ export function WorkflowListPage() {
   const toast = useToast();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Workflow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   function load() {
     setLoading(true);
     return apiGet<Workflow[]>("/api/workflows")
-      .then(setWorkflows)
+      .then((data) => {
+        setWorkflows(data);
+        setLoadError(false);
+      })
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err instanceof ApiError ? err.message : "Không tải được danh sách luồng duyệt");
+      })
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải 1 lần lúc mount
   }, []);
 
   async function confirmDelete() {
@@ -67,6 +77,13 @@ export function WorkflowListPage() {
         <div className="table-wrap">
           <SkeletonRows rows={3} cols={3} />
         </div>
+      ) : loadError && workflows.length === 0 ? (
+        <Alert tone="danger">
+          Không tải được danh sách luồng duyệt.{" "}
+          <Button variant="ghost" size="sm" onClick={load}>
+            Thử lại
+          </Button>
+        </Alert>
       ) : workflows.length === 0 ? (
         <div className="card">
           <EmptyState icon={<GitBranch size={26} />} title="Chưa có luồng duyệt nào" />

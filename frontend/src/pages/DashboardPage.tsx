@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { ReactNode } from "react";
 import { CheckCircle2, Clock, FileText, Inbox, PenSquare, XCircle } from "lucide-react";
-import { apiGet } from "../api/client";
-import { Badge, Card, PageHeader, PageLoading } from "../components/ui";
+import { apiGet, ApiError } from "../api/client";
+import { Alert, Badge, Button, Card, PageHeader, PageLoading } from "../components/ui";
 import { statusLabel, STATUS_TONES } from "../lib/labels";
 import { useAuth } from "../context/AuthContext";
 import type { DashboardData } from "../types";
@@ -54,21 +54,53 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  function load() {
+    setLoading(true);
+    apiGet<DashboardData>("/api/dashboard")
+      .then((d) => {
+        setData(d);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        // Không xoá `data` cũ nếu load lại lỗi — giữ số liệu cũ hiển thị hơn là màn hình trắng.
+        setLoadError(err instanceof ApiError ? err.message : "Không tải được dữ liệu tổng quan");
+      })
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
-    apiGet<DashboardData>("/api/dashboard")
-      .then(setData)
-      .finally(() => setLoading(false));
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải 1 lần lúc mount
   }, []);
 
   if (loading) return <PageLoading />;
-  if (!data) return null;
+  if (!data) {
+    return (
+      <Alert tone="danger">
+        {loadError ?? "Không tải được dữ liệu tổng quan"}{" "}
+        <Button variant="ghost" size="sm" onClick={load}>
+          Thử lại
+        </Button>
+      </Alert>
+    );
+  }
 
   const maxMonthly = Math.max(1, ...data.monthly.map((m) => m.count));
 
   return (
     <div>
       <PageHeader title="Tổng quan" subtitle={`Xin chào, ${user?.fullName ?? ""}`} />
+
+      {loadError && (
+        <Alert tone="warning">
+          Số liệu dưới đây có thể chưa mới nhất — lần làm mới gần nhất bị lỗi ({loadError}).{" "}
+          <Button variant="ghost" size="sm" onClick={load}>
+            Thử lại
+          </Button>
+        </Alert>
+      )}
 
       <div className="stat-grid">
         <StatCard

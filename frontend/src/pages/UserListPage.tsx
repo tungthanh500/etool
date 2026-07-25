@@ -1,27 +1,44 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { UserPlus, Pencil, Users } from "lucide-react";
-import { apiGet } from "../api/client";
+import { apiGet, ApiError } from "../api/client";
 import {
+  Alert,
   Avatar,
   Badge,
   Button,
   EmptyState,
   PageHeader,
   SkeletonRows,
+  useToast,
 } from "../components/ui";
 import { roleLabel, ROLE_TONES } from "../lib/labels";
 import type { User } from "../types";
 
 export function UserListPage() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+
+  function load() {
+    setLoading(true);
+    apiGet<User[]>("/api/users")
+      .then((data) => {
+        setUsers(data);
+        setLoadError(false);
+      })
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err instanceof ApiError ? err.message : "Không tải được danh sách user");
+      })
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
-    apiGet<User[]>("/api/users")
-      .then(setUsers)
-      .finally(() => setLoading(false));
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải 1 lần lúc mount, load() không đổi identity theo state nào cần theo dõi
   }, []);
 
   return (
@@ -44,6 +61,13 @@ export function UserListPage() {
         <div className="table-wrap">
           <SkeletonRows rows={4} cols={5} />
         </div>
+      ) : loadError && users.length === 0 ? (
+        <Alert tone="danger">
+          Không tải được danh sách user.{" "}
+          <Button variant="ghost" size="sm" onClick={load}>
+            Thử lại
+          </Button>
+        </Alert>
       ) : users.length === 0 ? (
         <div className="card">
           <EmptyState icon={<Users size={26} />} title="Chưa có user nào" />

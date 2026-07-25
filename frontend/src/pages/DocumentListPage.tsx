@@ -5,6 +5,7 @@ import { apiGet, apiDownload, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useWebSocket } from "../hooks/useWebSocket";
 import {
+  Alert,
   Badge,
   Button,
   DateInput,
@@ -59,6 +60,7 @@ export function DocumentListPage() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [exporting, setExporting] = useState(false);
   // Danh sách {id, fullName} cho ô "Đã duyệt bởi" — backend chỉ trả những người có quyền
   // duyệt (role có document:approve:* hoặc Admin), endpoint mở cho mọi user đã đăng nhập.
@@ -126,11 +128,21 @@ export function DocumentListPage() {
       const data = await apiGet<DocumentListResponse>(`${path}?${qs.toString()}`);
       setDocuments(data.items);
       setTotal(data.total);
+      setLoadError(false);
+    } catch (err) {
+      // Giữ nguyên danh sách cũ khi tải lỗi — không xoá về rỗng để tránh người duyệt
+      // hiểu nhầm "không có hồ sơ nào" trong khi thực chất là lỗi mạng/server.
+      setLoadError(true);
+      toast({
+        tone: "danger",
+        title: "Không tải được danh sách văn bản",
+        message: err instanceof ApiError ? err.message : "Vui lòng thử lại.",
+      });
     } finally {
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, q, status, from, to, creator, approvedBy, approvedFrom, approvedTo, page]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- buildFilterParams đọc lại đúng các state đã có trong deps bên dưới, không cần thêm chính nó vào deps
+  }, [tab, q, status, from, to, creator, approvedBy, approvedFrom, approvedTo, page, toast]);
 
   useEffect(() => {
     fetchList();
@@ -145,7 +157,7 @@ export function DocumentListPage() {
       title: lastEvent.actorName,
       message: `${EVENT_LABELS[lastEvent.type] ?? lastEvent.type}: ${lastEvent.title}`,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ muốn chạy lại khi CÓ event mới, không phải khi fetchList/toast đổi identity
   }, [lastEvent]);
 
   const canCreate = user?.role.permissions.includes("document:create") ?? false;
@@ -268,6 +280,13 @@ export function DocumentListPage() {
         <div className="table-wrap">
           <SkeletonRows rows={5} cols={6} />
         </div>
+      ) : loadError && documents.length === 0 ? (
+        <Alert tone="danger">
+          Không tải được danh sách văn bản — có thể do lỗi mạng hoặc server.{" "}
+          <Button variant="ghost" size="sm" onClick={() => fetchList()}>
+            Thử lại
+          </Button>
+        </Alert>
       ) : documents.length === 0 ? (
         <div className="card">
           <EmptyState

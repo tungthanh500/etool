@@ -55,13 +55,17 @@ export function WorkflowFormPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Chặn hẳn form khi load lỗi (không hiện form rỗng) — cùng lý do với UserFormPage: form
+  // sửa hiện rỗng trông giống "tạo mới", bấm Lưu sẽ PATCH đè cấu hình luồng duyệt thật.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
     Promise.all([
       apiGet<Department[]>("/api/departments"),
       // Chỉ Admin vào được trang này (workflow:manage đi cùng user:manage ở role hiện tại) —
@@ -87,8 +91,17 @@ export function WorkflowFormPage() {
         } else {
           setSteps([{ ...EMPTY_STEP }]);
         }
+        setLoadError(null);
+      })
+      .catch((err) => {
+        setLoadError(err instanceof ApiError ? err.message : "Không tải được dữ liệu");
       })
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ cần chạy lại khi id/isEdit đổi
   }, [id, isEdit]);
 
   const usersByDept = useMemo(() => {
@@ -211,6 +224,24 @@ export function WorkflowFormPage() {
   }
 
   if (loading) return <PageLoading />;
+
+  if (loadError) {
+    return (
+      <div>
+        <PageHeader
+          title={isEdit ? "Sửa luồng duyệt" : "Tạo luồng duyệt mới"}
+          backTo="/workflows"
+          backLabel="Quay lại danh sách"
+        />
+        <Alert tone="danger">
+          {loadError}{" "}
+          <Button variant="ghost" size="sm" onClick={load}>
+            Thử lại
+          </Button>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div>

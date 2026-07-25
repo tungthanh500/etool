@@ -33,8 +33,13 @@ export function UserFormPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Load lỗi giữa chừng: PHẢI chặn hẳn form thay vì hiện form rỗng — nếu không, ở chế độ
+  // sửa user sẽ trông giống hệt "thêm mới" (mọi field về rỗng/mặc định) và bấm Lưu sẽ
+  // PATCH đè dữ liệu rỗng lên user thật.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
     Promise.all([
       apiGet<Role[]>("/api/roles"),
       apiGet<Department[]>("/api/departments"),
@@ -55,8 +60,17 @@ export function UserFormPage() {
           setIsActive(u.isActive);
           setIsSelf(u.id === me.id);
         }
+        setLoadError(null);
+      })
+      .catch((err) => {
+        setLoadError(err instanceof ApiError ? err.message : "Không tải được dữ liệu");
       })
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ cần chạy lại khi id/isEdit đổi, load() luôn đọc state mới nhất qua closure tại thời điểm gọi
   }, [id, isEdit]);
 
   async function handleSubmit(e: FormEvent) {
@@ -80,6 +94,24 @@ export function UserFormPage() {
   }
 
   if (loading) return <PageLoading />;
+
+  if (loadError) {
+    return (
+      <div>
+        <PageHeader
+          title={isEdit ? "Sửa user" : "Thêm user"}
+          backTo="/users"
+          backLabel="Quay lại danh sách"
+        />
+        <Alert tone="danger">
+          {loadError}{" "}
+          <Button variant="ghost" size="sm" onClick={load}>
+            Thử lại
+          </Button>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div>

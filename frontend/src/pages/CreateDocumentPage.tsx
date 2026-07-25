@@ -23,6 +23,7 @@ export function CreateDocumentPage() {
   const navigate = useNavigate();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [type, setType] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [formData, setFormData] = useState<unknown>({});
@@ -30,10 +31,22 @@ export function CreateDocumentPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
+  function loadWorkflows() {
+    setLoading(true);
     apiGet<Workflow[]>("/api/workflows")
-      .then(setWorkflows)
+      .then((data) => {
+        setWorkflows(data);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        setLoadError(err instanceof ApiError ? err.message : "Không tải được danh sách loại văn bản");
+      })
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadWorkflows();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải 1 lần lúc mount
   }, []);
 
   function selectType(t: string) {
@@ -82,7 +95,16 @@ export function CreateDocumentPage() {
     return (
       <div>
         <PageHeader title="Tạo văn bản mới" backTo="/documents" backLabel="Quay lại danh sách" />
-        <p style={{ color: "var(--text-muted)", marginTop: 0 }}>Chọn loại văn bản để bắt đầu.</p>
+        {loadError ? (
+          <Alert tone="danger">
+            {loadError}{" "}
+            <Button variant="ghost" size="sm" onClick={loadWorkflows}>
+              Thử lại
+            </Button>
+          </Alert>
+        ) : (
+          <p style={{ color: "var(--text-muted)", marginTop: 0 }}>Chọn loại văn bản để bắt đầu.</p>
+        )}
         <div className="doc-type-grid">
           {workflows.map((w) => {
             const Icon = TYPE_ICONS[w.name] ?? FileText;

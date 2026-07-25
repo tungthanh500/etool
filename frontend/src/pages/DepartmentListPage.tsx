@@ -20,6 +20,7 @@ export function DepartmentListPage() {
   const toast = useToast();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [editing, setEditing] = useState<Department | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -33,12 +34,20 @@ export function DepartmentListPage() {
   function load() {
     setLoading(true);
     return apiGet<Department[]>("/api/departments")
-      .then(setDepartments)
+      .then((data) => {
+        setDepartments(data);
+        setLoadError(false);
+      })
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err instanceof ApiError ? err.message : "Không tải được danh sách phòng ban");
+      })
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải 1 lần lúc mount
   }, []);
 
   function openCreate() {
@@ -107,6 +116,13 @@ export function DepartmentListPage() {
         <div className="table-wrap">
           <SkeletonRows rows={3} cols={2} />
         </div>
+      ) : loadError && departments.length === 0 ? (
+        <Alert tone="danger">
+          Không tải được danh sách phòng ban.{" "}
+          <Button variant="ghost" size="sm" onClick={load}>
+            Thử lại
+          </Button>
+        </Alert>
       ) : departments.length === 0 ? (
         <div className="card">
           <EmptyState icon={<Building2 size={26} />} title="Chưa có phòng ban nào" />
