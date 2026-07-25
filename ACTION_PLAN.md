@@ -211,3 +211,39 @@ GĐ0 (0.1→0.6, 0.7 ghi nhận) → GĐ1 (1.1 → 1.2 → 1.3 → 1.4 → 1.6, 
 ```
 
 Quy ước chung cho MỌI mục: `tsc --noEmit` (backend) + `npm run build` (frontend) sạch; test luồng thật (curl/trình duyệt) như các bước trước; thời gian hiển thị luôn GMT+7; message lỗi tiếng Việt; hành động ghi audit đầy đủ.
+
+---
+
+## Giai đoạn 6 — Hoàn thiện thu hồi hồ sơ đã duyệt một phần (HOÀN THÀNH 2026-07-21)
+
+> Mở rộng mục **2.2** (đã HOÀN THÀNH 2026-07-16). Rà soát lại bằng test thật (2026-07-21) xác nhận: thu hồi sau khi đã qua 1+ bước duyệt **đã hoạt động đúng** (chặn duyệt tiếp, biến khỏi hàng chờ, báo cho người ĐÃ duyệt trước đó) — chỉ thiếu 2 điểm dưới đây. Đã chốt với người dùng: `WITHDRAWN` **vẫn terminal** (không nộp lại được, phải tạo văn bản mới — giữ đúng quyết định gốc của 2.2), và **bắt buộc nhập lý do** khi thu hồi.
+>
+> **KẾT QUẢ (2026-07-21):** cả 6.1–6.4 hoàn thành theo TDD. 49/49 test backend xanh (thêm 5 test mới: bắt buộc lý do, thông báo 2 chiều khi thu hồi, thông báo đồng cấp khi reject/request-change). `tsc` sạch 2 phía, oxlint chỉ còn 2 warning gốc không liên quan. Kiểm chứng UI bằng trình duyệt thật: dialog thu hồi có ô lý do bắt buộc + cảnh báo, chặn-khi-trống hiện lỗi inline, thu hồi kèm lý do thành công. Dọn sạch 2 văn bản test khỏi DB. **Chưa commit.**
+>
+> **2 điều chỉnh so với kế hoạch gốc (ghi lại để minh bạch):**
+> 1. **Lý do KHÔNG nhét vào payload `notify`** (khác gạch đầu dòng "Đưa lý do vào payload notify" ở 6.2 bên dưới): bảng `Notification` không có cột chứa lý do, và reject/request-change hiện cũng chỉ lưu lý do ở `DocumentLog.comment` (hiện ở timeline). Để nhất quán + tránh migration thừa, thu hồi theo đúng khuôn đó — người nhận bấm vào hồ sơ là thấy lý do trong timeline. Không đổi schema.
+> 2. **UI chặn-khi-trống bằng lỗi inline, KHÔNG disable nút** (khác chữ "không cho gửi khi trống" ở 6.1): `PromptDialog` sẵn có (dùng chung với reject/request-change) khi bấm gửi lúc trống sẽ hiện lỗi "Vui lòng nhập nội dung" và không submit, thay vì làm mờ nút. Giữ đúng convention hiện hành, backend vẫn là chốt chặn thứ 2 (400).
+
+### [x] 6.1 — Bắt buộc lý do khi thu hồi — HOÀN THÀNH 2026-07-21
+- **Backend (`lib/documentActions.ts` — `withdrawDocument`):** parse bằng `commentRequiredSchema` (giống `rejectDocument`/`requestChangeDocument`) → 400 "Cần nêu lý do thu hồi" nếu thiếu. Lưu vào `DocumentLog.comment` của action `WITHDRAW`.
+- **Frontend (`DocumentDetailPage.tsx`):** bỏ `ConfirmDialog` hiện tại (chỉ Có/Không) cho nút "Thu hồi", đổi sang tái dùng cơ chế `PromptDialog` + `runAction` đã có sẵn cho Từ chối/Yêu cầu chỉnh sửa (không set `optional` → bắt buộc nhập). Bỏ state `confirmWithdraw` không dùng nữa.
+- **Nghiệm thu:** gọi `/withdraw` không kèm `comment` → 400; kèm lý do → 200, log WITHDRAW có đúng nội dung lý do; UI hiện ô nhập bắt buộc, không cho gửi khi trống.
+
+### [x] 6.2 — Báo cho người ĐANG chờ duyệt (chưa duyệt), không chỉ người đã duyệt — HOÀN THÀNH 2026-07-21
+- **Nguyên nhân đã xác định:** `notify(await getNotifiableUserIds(updated, ...))` trong `withdrawDocument` dùng `updated` (đã đổi status khỏi `PENDING`) → `getCurrentStepApproverIds` bên trong trả rỗng do guard `status !== "PENDING"` → người đang ở bước hiện tại (chưa từng hành động, nên không có mặt trong `logs`) không được thêm vào danh sách nhận thông báo.
+- **Fix:** đổi tham số truyền vào `getNotifiableUserIds` từ `updated` sang `document` (snapshot lấy trước transaction, vẫn `PENDING`, cùng `currentStep` vì transaction không đổi cột này) — chỉ đổi đúng 1 chỗ, không sửa `getCurrentStepApproverIds`/`getNotifiableUserIds` (vẫn đúng cho các nơi gọi khác).
+- **Đưa lý do thu hồi vào payload notify** (`detail`/nội dung hiển thị) để người nhận biết vì sao, không chỉ "đã thu hồi văn bản".
+- **Nghiệm thu:** thu hồi hồ sơ đang ở bước 2 (đã có người duyệt bước 1) → CẢ người đã duyệt bước 1 VÀ người đang chờ ở bước 2 đều có `Notification` type `document:withdrawn`; người đang chờ cố gọi `/approve` sau đó → 400.
+
+### [x] 6.3 — Áp cùng fix cho `rejectDocument` và `requestChangeDocument` (cùng lỗi gốc, phát hiện khi làm 6.2) — HOÀN THÀNH 2026-07-21
+- Hai hàm này cũng gọi `notify(await getNotifiableUserIds(updated, ...))` sau khi đổi status khỏi `PENDING` → cùng lỗi: ở bước "bất kỳ thành viên phòng X" có nhiều người, 1 người từ chối/yêu cầu sửa thì những người còn lại (chưa hành động) không được báo, hồ sơ lặng lẽ biến mất khỏi hàng chờ của họ.
+- Fix giống 6.2: đổi `updated` → `document` trong đúng 2 dòng `notify(...)` tương ứng.
+- **Nghiệm thu:** bước có ≥2 người cùng đủ điều kiện duyệt, 1 người từ chối/yêu cầu sửa → người còn lại cũng nhận `Notification`.
+
+### [x] 6.4 — Test (viết trước khi sửa, theo TDD) — HOÀN THÀNH 2026-07-21
+- Đã thêm helper `waitForNotifications` (poll ngắn) vì `notify()` là fire-and-forget — query Notification ngay lập tức dễ trượt do race. 5 test mới trong `documents.actions.test.ts`.
+- Thu hồi không nêu lý do → 400 (test mới, RED trước khi làm 6.1).
+- Thu hồi sau khi đã qua 1 bước duyệt → assert cả người đã duyệt VÀ người đang chờ duyệt đều có `Notification`, người đang chờ duyệt tiếp bị 400, lý do có trong `DocumentLog.comment` (test mới, RED trước khi làm 6.2, xem file tạm đã dùng để khảo sát: mô hình fixture GENERAL 2 bước — depthead1 duyệt bước 1, director1 ở bước 2).
+- 1 test rút gọn tương tự cho reject và request-change (cho 6.3).
+
+**Thứ tự đề xuất:** 6.4 (viết test RED) → 6.1 → 6.2 → 6.3 → chạy lại 6.4 (GREEN) → hồi quy toàn bộ suite hiện có.

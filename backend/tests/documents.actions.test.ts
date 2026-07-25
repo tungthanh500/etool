@@ -15,6 +15,17 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+// notify() là fire-and-forget (ghi Notification ở background sau khi response trả về) —
+// poll ngắn để test tất định thay vì query ngay lập tức (dễ trượt do race).
+async function waitForNotifications(where: { userId: string; type: string; documentId: string }, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = await prisma.notification.findMany({ where });
+    if (rows.length > 0 || Date.now() > deadline) return rows;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 // Tạo 1 văn bản GENERAL qua API (đường thật) và trả về body response.
 async function createGeneral(creatorId: string, ghiChu = "Nội dung thử") {
   const res = await request(app)
@@ -166,25 +177,118 @@ describe("Yêu cầu chỉnh sửa -> nộp lại", () => {
 });
 
 describe("Thu hồi (withdraw)", () => {
-  it("creator thu hồi khi PENDING -> WITHDRAWN", async () => {
+  it("creator thu hồi khi PENDING kèm lý do -> WITHDRAWN, log WITHDRAW có comment", async () => {
+    const created = await createGeneral(fx.users.staff1.id);
+    const res = await request(app)
+      .post(`/api/documents/${created.body.id}/withdraw`)
+      .set("Cookie", authCookie(fx.users.staff1.id))
+      .send({ comment: "Nhầm số tiền, thu hồi để làm lại" });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("WITHDRAWN");
+    const log = res.body.logs.find((l: { action: string }) => l.action === "WITHDRAW");
+    expect(log.comment).toContain("Nhầm số tiền");
+  });
+
+  it("thu hồi KHÔNG nêu lý do -> 400", async () => {
     const created = await createGeneral(fx.users.staff1.id);
     const res = await request(app)
       .post(`/api/documents/${created.body.id}/withdraw`)
       .set("Cookie", authCookie(fx.users.staff1.id))
       .send({});
-    expect(res.status).toBe(200);
-    expect(res.body.status).toBe("WITHDRAWN");
+    expect(res.status).toBe(400);
   });
 
   it("thu hồi văn bản không còn PENDING (đã WITHDRAWN) -> 400", async () => {
     const created = await createGeneral(fx.users.staff1.id);
     const id = created.body.id;
-    await request(app).post(`/api/documents/${id}/withdraw`).set("Cookie", authCookie(fx.users.staff1.id)).send({});
+    await request(app).post(`/api/documents/${id}/withdraw`).set("Cookie", authCookie(fx.users.staff1.id)).send({ comment: "lý do" });
     const res = await request(app)
       .post(`/api/documents/${id}/withdraw`)
       .set("Cookie", authCookie(fx.users.staff1.id))
-      .send({});
+      .send({ comment: "lý do 2" });
     expect(res.status).toBe(400);
+  });
+
+  it("thu hồi sau khi đã duyệt 1 bước: báo cả người ĐÃ duyệt lẫn người ĐANG chờ duyệt", async () => {
+    // staff1 nộp -> depthead1 duyệt bước 1 -> sang bước 2 (đích danh director1, chưa duyệt).
+    const created = await createGeneral(fx.users.staff1.id);
+    const id = created.body.id;
+    await request(app)
+      .post(`/api/documents/${id}/approve`)
+      .set("Cookie", authCookie(fx.users.depthead1.id))
+      .send({ comment: "ok bước 1" });
+
+    const res = await request(app)
+      .post(`/api/documents/${id}/withdraw`)
+      .set("Cookie", authCookie(fx.users.staff1.id))
+      .send({ comment: "Phát hiện sai sót" });
+    expect(res.status).toBe(200);
+
+    // depthead1 (đã duyệt bước 1) VÀ director1 (đang chờ ở bước 2) đều phải nhận thông báo.
+    const depthead1Notifs = await waitForNotifications({ userId: fx.users.depthead1.id, type: "document:withdrawn", documentId: id });
+    const director1Notifs = await waitForNotifications({ userId: fx.users.director1.id, type: "document:withdrawn", documentId: id });
+    expect(depthead1Notifs.length).toBe(1);
+    expect(director1Notifs.length).toBe(1);
+
+    // director1 không còn duyệt được nữa.
+    const blockedNext = await request(app)
+      .post(`/api/documents/${id}/approve`)
+      .set("Cookie", authCookie(fx.users.director1.id))
+      .send({ comment: "cố duyệt" });
+    expect(blockedNext.status).toBe(400);
+  });
+});
+
+// 6.3: bước "bất kỳ thành viên phòng X" có ≥2 người cùng đủ điều kiện — khi 1 người
+// từ chối / yêu cầu chỉnh sửa, người còn lại (chưa hành động) vẫn phải được báo là hồ sơ
+// đã rời khỏi hàng chờ của họ.
+describe("Thông báo cho đồng cấp khi từ chối / yêu cầu chỉnh sửa (6.3)", () => {
+  // Nộp 1 đơn LEAVE của staff1 và đưa tới bước 2 (bất kỳ thành viên Phòng Nhân sự).
+  // Thêm hrstaff2 để bước 2 có 2 người: hrstaff + hrstaff2.
+  async function leaveAtHrStep() {
+    const bcrypt = (await import("bcryptjs")).default;
+    const passwordHash = await bcrypt.hash("Test1234!", 10);
+    const hr2 = await prisma.user.create({
+      data: {
+        username: "hrstaff2", email: "hrstaff2@test.local", fullName: "Nhân sự Hai",
+        passwordHash, roleId: fx.roles.Staff.id, departmentId: fx.depts.nhanSu.id,
+      },
+    });
+    const created = await request(app)
+      .post("/api/documents")
+      .set("Cookie", authCookie(fx.users.staff1.id))
+      .field("type", "LEAVE")
+      .field("formData", JSON.stringify({ tuNgay: "2026-08-01", denNgay: "2026-08-05", loaiNghi: "ANNUAL", lyDo: "x" }));
+    const id = created.body.id;
+    // staff1 ở Phòng Kỹ thuật -> bước 1 CREATOR_DEPT_HEAD = depthead1 duyệt.
+    await request(app).post(`/api/documents/${id}/approve`).set("Cookie", authCookie(fx.users.depthead1.id)).send({ comment: "ok" });
+    return { id, hr2Id: hr2.id };
+  }
+
+  it("từ chối bởi hrstaff -> hrstaff2 (đồng cấp chưa hành động) vẫn nhận Notification", async () => {
+    const { id, hr2Id } = await leaveAtHrStep();
+    const res = await request(app)
+      .post(`/api/documents/${id}/reject`)
+      .set("Cookie", authCookie(fx.users.hrstaff.id))
+      .send({ comment: "Không hợp lệ" });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("REJECTED");
+
+    const hr2Notifs = await waitForNotifications({ userId: hr2Id, type: "document:rejected", documentId: id });
+    expect(hr2Notifs.length).toBe(1);
+  });
+
+  it("yêu cầu chỉnh sửa bởi hrstaff -> hrstaff2 vẫn nhận Notification", async () => {
+    const { id, hr2Id } = await leaveAtHrStep();
+    const res = await request(app)
+      .post(`/api/documents/${id}/request-change`)
+      .set("Cookie", authCookie(fx.users.hrstaff.id))
+      .send({ comment: "Bổ sung thông tin" });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("CHANGES_REQUESTED");
+
+    const hr2Notifs = await waitForNotifications({ userId: hr2Id, type: "document:changes_requested", documentId: id });
+    expect(hr2Notifs.length).toBe(1);
   });
 });
 

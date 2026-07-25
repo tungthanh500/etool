@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import {
   Check,
@@ -22,7 +23,6 @@ import {
   Badge,
   Button,
   Card,
-  ConfirmDialog,
   Field,
   PageHeader,
   PageLoading,
@@ -54,6 +54,7 @@ interface PromptConfig {
   label: string;
   confirmLabel: string;
   confirmTone: "primary" | "danger" | "orange";
+  message?: ReactNode;
 }
 
 export function DocumentDetailPage() {
@@ -77,9 +78,6 @@ export function DocumentDetailPage() {
   const [editRemoveIds, setEditRemoveIds] = useState<Set<string>>(new Set());
   const [editNewFiles, setEditNewFiles] = useState<File[]>([]);
   const [editError, setEditError] = useState<string | null>(null);
-
-  // Thu hồi văn bản (mục 2.2)
-  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
 
   // Xác nhận duyệt (R21): tránh 1 click nhầm là duyệt luôn — hành động không hoàn tác được.
   const [confirmApprove, setConfirmApprove] = useState(false);
@@ -117,6 +115,7 @@ export function DocumentDetailPage() {
     reject: "Đã từ chối văn bản",
     "request-change": "Đã gửi yêu cầu chỉnh sửa",
     resubmit: "Đã nộp lại văn bản",
+    withdraw: "Đã thu hồi văn bản",
   };
 
   async function runAction(path: string, comment?: string) {
@@ -159,20 +158,8 @@ export function DocumentDetailPage() {
     }
   }
 
-  async function withdraw() {
-    if (!id) return;
-    setBusy(true);
-    try {
-      await apiPost(`/api/documents/${id}/withdraw`);
-      setConfirmWithdraw(false);
-      await fetchDoc();
-      toast({ tone: "success", message: "Đã thu hồi văn bản" });
-    } catch (err) {
-      toast({ tone: "danger", message: err instanceof ApiError ? err.message : "Thu hồi thất bại" });
-    } finally {
-      setBusy(false);
-    }
-  }
+  // Thu hồi dùng chung cơ chế runAction + PromptDialog (bắt buộc nhập lý do) — giống
+  // Từ chối/Yêu cầu chỉnh sửa. Không còn hàm withdraw() riêng.
 
   async function submitComment() {
     if (!id || !comment.trim()) return;
@@ -462,7 +449,17 @@ export function DocumentDetailPage() {
               variant="ghost"
               leftIcon={<Undo2 size={17} />}
               disabled={busy}
-              onClick={() => setConfirmWithdraw(true)}
+              onClick={() =>
+                setPrompt({
+                  path: "withdraw",
+                  title: "Thu hồi văn bản",
+                  label: "Lý do thu hồi",
+                  confirmLabel: "Thu hồi",
+                  confirmTone: "danger",
+                  message:
+                    "Văn bản sẽ chuyển sang trạng thái Đã thu hồi và không thể nộp lại — muốn trình lại phải tạo văn bản mới. Người đã duyệt và người đang chờ duyệt sẽ nhận được thông báo.",
+                })
+              }
             >
               Thu hồi
             </Button>
@@ -627,21 +624,11 @@ export function DocumentDetailPage() {
         </div>
       </Card>
 
-      <ConfirmDialog
-        open={confirmWithdraw}
-        title="Thu hồi văn bản"
-        message="Văn bản sẽ chuyển sang trạng thái Đã thu hồi và không thể nộp lại — muốn trình lại phải tạo văn bản mới. Bạn có chắc chắn?"
-        confirmLabel="Thu hồi"
-        danger
-        loading={busy}
-        onConfirm={withdraw}
-        onCancel={() => setConfirmWithdraw(false)}
-      />
-
       <PromptDialog
         open={prompt !== null}
         title={prompt?.title ?? ""}
         label={prompt?.label}
+        message={prompt?.message}
         confirmLabel={prompt?.confirmLabel}
         confirmTone={prompt?.confirmTone}
         loading={busy}

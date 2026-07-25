@@ -167,7 +167,10 @@ export async function rejectDocument(req: Request) {
     });
   });
 
-  notify(await getNotifiableUserIds(updated, req.user!.id), {
+  // Dùng `document` (snapshot PENDING trước tx) chứ không `updated` (đã REJECTED) — nếu không,
+  // đồng cấp CHƯA hành động ở bước "bất kỳ thành viên phòng X" sẽ không được báo. Xem chú
+  // thích chi tiết ở withdrawDocument.
+  notify(await getNotifiableUserIds(document, req.user!.id), {
     type: "document:rejected",
     documentId: updated.id,
     title: updated.title,
@@ -211,7 +214,8 @@ export async function requestChangeDocument(req: Request) {
     });
   });
 
-  notify(await getNotifiableUserIds(updated, req.user!.id), {
+  // Dùng `document` (snapshot PENDING trước tx), không `updated` — xem chú thích ở withdrawDocument.
+  notify(await getNotifiableUserIds(document, req.user!.id), {
     type: "document:changes_requested",
     documentId: updated.id,
     title: updated.title,
@@ -295,6 +299,12 @@ export async function resubmitDocument(req: Request) {
 }
 
 export async function withdrawDocument(req: Request) {
+  // Bắt buộc lý do — giống reject/request-change: người đã duyệt trước đó và người đang chờ
+  // duyệt cần biết vì sao hồ sơ bị rút, tránh hoang mang. Lý do lưu ở DocumentLog.comment,
+  // hiển thị trong timeline (nhất quán với các action khác, không nhét vào Notification).
+  const parsed = commentRequiredSchema.safeParse(req.body ?? {});
+  if (!parsed.success) throw new AppError(400, "Cần nêu lý do thu hồi");
+
   const document = await loadDocumentForAction(req.params.id);
   if (document.creatorId !== req.user!.id) {
     throw new AppError(403, "Chỉ người tạo mới được thu hồi văn bản này");
@@ -305,7 +315,7 @@ export async function withdrawDocument(req: Request) {
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.documentLog.create({
-      data: { documentId: document.id, userId: req.user!.id, action: "WITHDRAW" },
+      data: { documentId: document.id, userId: req.user!.id, action: "WITHDRAW", comment: parsed.data.comment },
     });
     return tx.document.update({
       where: { id: document.id, currentStep: document.currentStep, status: "PENDING" },
@@ -314,7 +324,12 @@ export async function withdrawDocument(req: Request) {
     });
   });
 
-  notify(await getNotifiableUserIds(updated, req.user!.id), {
+  // Dùng `document` (snapshot TRƯỚC transaction, vẫn PENDING) chứ KHÔNG dùng `updated`:
+  // getNotifiableUserIds -> getCurrentStepApproverIds có guard `status !== "PENDING"` trả
+  // rỗng, nên nếu truyền `updated` (đã WITHDRAWN) thì người ĐANG chờ duyệt ở bước hiện tại
+  // (chưa hành động, không có trong logs) sẽ KHÔNG được báo. `document` cùng currentStep vì
+  // transaction không đổi cột đó — chỉ khác `status`.
+  notify(await getNotifiableUserIds(document, req.user!.id), {
     type: "document:withdrawn",
     documentId: updated.id,
     title: updated.title,
