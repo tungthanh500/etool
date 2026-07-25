@@ -15,6 +15,10 @@ interface DateInputProps {
   /** Cho phép nút xoá nhanh giá trị. Mặc định: bật khi không required. */
   clearable?: boolean;
   "aria-label"?: string;
+  /** Do <Field> tự inject để gắn <label htmlFor> đúng vào nút bấm mở lịch. */
+  id?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
 }
 
 const WEEKDAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
@@ -43,6 +47,9 @@ export function DateInput({
   required,
   clearable = !required,
   "aria-label": ariaLabel,
+  id,
+  "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
 }: DateInputProps) {
   const [open, setOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
@@ -104,11 +111,14 @@ export function DateInput({
   return (
     <div className="date-input" ref={rootRef}>
       <button
+        id={id}
         type="button"
         className={`input date-input__control ${value ? "" : "date-input__control--empty"}`}
         onClick={toggleOpen}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
+        aria-invalid={ariaInvalid}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
