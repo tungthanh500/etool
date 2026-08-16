@@ -1,6 +1,7 @@
 # SYSTEM_OVERVIEW.md — Tổng quan hệ thống e-Approval
 
-> Cập nhật: 2026-07-19. Tài liệu này là bản tổng hợp MỘT-FILE cho người mới tiếp cận codebase
+> Cập nhật: 2026-08-16 (đồng bộ tới commit `176a94a` — thay đổi code cuối 2026-07-25).
+> Tài liệu này là bản tổng hợp MỘT-FILE cho người mới tiếp cận codebase
 > (hoặc AI assistant đọc để tích hợp với hệ thống khác). Nhật ký xây dựng từng bước nằm ở
 > `IMPLEMENTATION_PLAN.md`; sổ rủi ro/bug ở `EXISTING-BUG.md`; hướng dẫn triển khai ở `DEPLOY.md`.
 
@@ -20,7 +21,7 @@
 | DB | PostgreSQL 16 (Docker Compose, bind 127.0.0.1) |
 | Frontend | React 19 + Vite + TypeScript, react-router, lucide-react |
 | Shared | npm workspaces: package `@etool/shared` (dual build CJS + ESM) |
-| Test/CI | Vitest + Supertest (39 integration test, DB riêng `eapproval_test`), GitHub Actions |
+| Test/CI | Vitest + Supertest (**49 test / 9 file**, DB riêng `eapproval_test`), GitHub Actions |
 
 **Nguyên tắc bất di bất dịch — Fat Server / Thin Client:** MỌI tính toán, validate, phân quyền nằm ở backend; frontend chỉ hiển thị. `@etool/shared` CHỈ chứa type + hằng số (contract), tuyệt đối không chứa thuật toán. Ví dụ: số ngày nghỉ/tổng tiền preview cũng do backend tính qua `POST /api/documents/preview` (frontend gọi debounce 300ms).
 
@@ -46,7 +47,9 @@ etool/
   frontend/src/
     pages/         # Login, Dashboard, DocumentList/Create/Detail, UserList/Form, DepartmentList,
                    #   RoleList (vai trò & quyền), WorkflowList/Form (builder kéo-thả), AuditLog, Account
-    components/    # AppLayout (sidebar theo quyền), documentForms/ (form theo loại), ui/ (design system nhỏ)
+    components/    # AppLayout (sidebar theo quyền), documentForms/ (form theo loại),
+                   #   ui/ (design system nhỏ theo phong cách Material 3: DateInput lịch bấm chọn,
+                   #   Field tự gắn htmlFor/aria-* vào control con, PromptDialog/ConfirmDialog, ForbiddenState)
     hooks/         # useWebSocket (reconnect backoff), useDocumentFormPreview, usePushNotifications
   deploy/          # Caddyfile + etool-backend.service (systemd) — chưa kích hoạt, xem DEPLOY.md
   scripts/         # backup-db.sh + RESTORE.md
@@ -70,6 +73,7 @@ etool/
 - **Mỗi request**: middleware `authenticate` verify JWT rồi **query lại User+Role+Department từ DB** — không tin claim trong token. `authorize(permission)` so với `role.permissions` (hỗ trợ `"*"`).
 - **Catalog quyền** (`PERMISSION_KEYS` trong shared): `document:create`, `document:read:own`, `document:approve:dept|final|payment` (3 quyền này CHỈ điều khiển hiển thị UI thẻ Uỷ quyền/Chữ ký), `user:manage`, `workflow:manage`, `audit:read`.
 - **Quyền DUYỆT thật sự KHÔNG đến từ role** mà từ VỊ TRÍ trong WorkflowStep của từng văn bản (so khớp tại thời điểm request — `lib/workflow.ts`), cộng cơ chế uỷ quyền (Delegation) đang hiệu lực.
+- **Chặn tự duyệt (2 chiều)** — `isCurrentApprover`/`findActingDelegator`: người tạo văn bản không bao giờ duyệt được hồ sơ của mình, kể cả (a) khi bước hiện tại là "bất kỳ thành viên phòng X" mà họ cũng thuộc phòng X, hoặc (b) khi họ tự uỷ quyền cho người khác rồi để người đó "duyệt thay" — `document.creatorId` bị loại khỏi cả danh tính người gọi API lẫn danh sách delegator.
 - `mustChangePassword`: admin cấp/reset mật khẩu → user bị ép đổi mật khẩu ngay lần đăng nhập sau.
 
 ## 5. Workflow engine — hành vi cốt lõi
@@ -77,8 +81,10 @@ etool/
 - **Auto-skip bước** khi tạo/nộp lại: bước không có ai đủ điều kiện duyệt (EMPTY) hoặc người duy nhất là chính người tạo (ONLY_CREATOR) → bỏ qua, ghi log STEP_SKIPPED kèm meta; nếu mọi bước đều bị bỏ → chặn tạo.
 - **Optimistic concurrency**: update kèm `where {id, currentStep, status}` — 2 người duyệt cùng lúc thì người sau nhận 409 "vừa được người khác xử lý".
 - **Guard sửa workflow**: không sửa steps khi còn văn bản PENDING trên workflow đó (409).
-- Duyệt bước cuối: LEAVE tự sinh PDF bản "đã duyệt" (1 trang, khu PHẦN PHÊ DUYỆT đủ người/giờ/chữ ký); loại khác có thể đính bản ký tay hoặc auto-stamp PDF gốc.
-- Reject/Request-change bắt buộc lý do; resubmit quay về bước thật đầu tiên; withdraw bởi người tạo khi chưa ai duyệt.
+- Duyệt bước cuối: LEAVE tự sinh PDF bản "đã duyệt" (1 trang, khu PHẦN PHÊ DUYỆT đủ người/giờ/chữ ký); loại khác có thể đính bản ký tay hoặc auto-stamp PDF gốc. Sinh PDF lỗi **không chặn** nộp/duyệt (thiết kế có chủ đích) nhưng ghi `AuditLog` action `FILE_GENERATE_FAILED` để Admin thấy trong Nhật ký hệ thống — không nuốt lỗi im lặng.
+- Reject/Request-change/Withdraw **đều bắt buộc lý do** (lưu ở `DocumentLog.comment`, hiện trên timeline); resubmit quay về bước thật đầu tiên.
+- **Thu hồi (withdraw)**: chỉ người tạo, chỉ khi hồ sơ còn `PENDING` — **kể cả khi đã qua vài bước duyệt**; `WITHDRAWN` là trạng thái **terminal** (không nộp lại được, phải tạo văn bản mới).
+- **Ai được báo khi hồ sơ rời trạng thái PENDING** (withdraw/reject/request-change): `getNotifiableUserIds` nhận **snapshot TRƯỚC transaction** (còn `PENDING`) — nhờ vậy báo được cho cả người ĐÃ duyệt các bước trước lẫn người ĐANG chờ duyệt ở bước hiện tại (chưa hành động nên không có trong `logs`). Truyền bản `updated` vào đây là bug đã từng xảy ra: guard `status !== "PENDING"` làm danh sách người đang chờ trả về rỗng.
 
 ## 6. API surface (tất cả JSON, prefix `/api`, cookie auth)
 
@@ -86,7 +92,7 @@ etool/
 |---|---|
 | Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `PATCH /auth/profile`, đổi mật khẩu |
 | Documents | `GET /documents` (của tôi) · `GET /documents/pending` (chờ tôi duyệt) · `GET /documents/export` (Excel) — cùng bộ lọc: `q, status, from, to, creator, approvedBy, approvedFrom, approvedTo, page, limit` · `POST /documents` (multipart, tối đa 10 file pdf/docx 15MB, magic-bytes check) · `POST /documents/preview` (tính soNgay/tongTien) · `GET/PATCH /documents/:id` · `POST /documents/:id/approve|reject|request-change|resubmit|withdraw|comments` · download attachment |
-| Users | CRUD (gate `user:manage`) · `GET /users/options` ({id, fullName} — mọi user đăng nhập, cho picker) |
+| Users | CRUD (gate `user:manage`) · `GET /users/options` ({id, fullName} cho picker "Đã duyệt bởi" — mọi user đăng nhập gọi được, nhưng **chỉ trả người CÓ quyền duyệt** (`document:approve:*` hoặc `*`)) |
 | Roles | `GET/POST/PATCH/DELETE /roles` (gate `user:manage`; guard chống tự khoá + chống xoá role còn user) |
 | Departments | CRUD (gate `user:manage`) |
 | Workflows | CRUD + builder steps (gate `workflow:manage`) |
@@ -111,8 +117,9 @@ Response lỗi thống nhất: `{ "error": "<message tiếng Việt>" }` + HTTP 
 - **Đã chuẩn bị sẵn go-live** (chưa kích hoạt — cần sudo tại máy): Caddy HTTPS `tls internal` + systemd + NODE_ENV=production — làm theo `DEPLOY.md` mục 1→5. Sau đó Web Push mới hoạt động (cần secure context).
 - Build production: `npm run build` ở root (shared → backend → frontend, đúng thứ tự).
 - Chạy dev: `docker compose up -d postgres` → `npm ci` (root, cài cả 3 workspace) → `npm run build:shared` → backend `npm run dev`, frontend `npm run dev`. Env: xem `backend/.env.example` (DATABASE_URL, JWT_SECRET, VAPID keys...) — **file .env thật không có trong bản bàn giao**.
-- Test: `cd backend && npm test` (tự migrate DB test riêng). CI chạy test + tsc + build mỗi push/PR vào main.
+- Test: `cd backend && npm test` (tự migrate DB test riêng) — **49/49 xanh** tính tới 2026-08-16. CI chạy test + tsc + build mỗi push/PR vào main.
 - Việc còn mở: R06/R17 (go-live — đã chuẩn bị sẵn), R18 (thiếu test frontend). Chi tiết: `EXISTING-BUG.md`.
+- **Đồng bộ git (2026-08-16):** local `main` và `origin/main` **trùng khớp** — đã push đợt 2026-07-25 (`ff5dd7c`→`176a94a`: chặn tự duyệt, 2 fix nuốt lỗi im lặng, fix a11y label, Giai đoạn 6 thu hồi) cùng bản cập nhật tài liệu này.
 
 ## 9. Gợi ý cho việc tích hợp với hệ thống khác (vd. CRM)
 

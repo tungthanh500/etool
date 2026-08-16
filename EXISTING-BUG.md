@@ -18,6 +18,7 @@
 - **Cập nhật 2026-07-18:** repo đã có remote GitHub (`origin`) và **đã push toàn bộ, không còn thay đổi tồn đọng**. Nhánh `main` local và `origin/main` trùng khớp tại commit `f1237da` (bao gồm cả toàn bộ Giai đoạn 5 — mục 5.1–5.6 — và fix R28). Mọi ghi chú "(chưa commit)" còn sót lại trong tài liệu này bên dưới đã lỗi thời và được sửa lại thành "(đã commit)".
 - **Cập nhật 2026-07-18 (tiếp, sau refactor + E1/E2):** Đóng R18 một phần (backend test + CI, xem `REFACTOR_PLAN.md` giai đoạn A + `POST_REFACTOR_PLAN.md` E1). Đóng R19 (chấp nhận có chủ đích). E2 (`POST_REFACTOR_PLAN.md`) hoàn tất theo hướng npm workspace + package `@etool/shared` (chỉ type/hằng số, không thuật toán — đúng nguyên tắc Fat Server/Thin Client). Phát sinh **R29** (mới, chưa fix): frontend đang tự tính toán ở 2 chỗ (`previewLeaveDays`, tổng tiền `PaymentForm`), vi phạm nguyên tắc Fat Server — cần quyết định UX trước khi sửa. Còn mở: R06, R12, R16, R17, R18 (một phần), R29.
 - **Cập nhật 2026-07-19:** Đóng **R29** (API preview `POST /api/documents/preview` + hook debounce, xem `POST_REFACTOR_PLAN.md` E2). Giai đoạn D: đóng **R16** (health check DB thật) và **R12** (WS reconnect backoff); **R06**/**R17** đã chuẩn bị sẵn toàn bộ code + config (`deploy/Caddyfile`, `deploy/etool-backend.service`, `DEPLOY.md`) nhưng CHƯA thực thi — cần sudo tại máy, người dùng hiện không có mặt. Dùng thử đa vai trò qua trình duyệt thật phát hiện + fix ngay **R30** (layout PAYMENT bó hẹp) và **R31** (seed user `hr` 2 ký tự vi phạm `usernameSchema`, Admin không sửa được qua UI); phát hiện thêm **R32** (mới, chưa fix, tech debt nhỏ): trang `/audit` hiện sai thông báo khi bị 403. Còn mở: R06, R17 (chuẩn bị sẵn), R18 (một phần), R32.
+- **Cập nhật 2026-08-16 (rà lại theo git log — tài liệu trước đó dừng ở 2026-07-19/21, code đã đi tiếp tới 2026-07-25):** ghi bổ sung 4 mục **R33–R36** (đều ĐÃ FIX) phát hiện trong đợt review sau khi chuẩn bị go-live, và 1 đợt làm mới giao diện (`bb850ee`, 2026-07-20 — DateInput lịch bấm chọn, design token Material 3, gọn bộ lọc; kèm thay đổi hành vi API `GET /users/options`). Giai đoạn 6 (thu hồi hồ sơ đã duyệt một phần) đã hoàn thành + commit — chi tiết ở `ACTION_PLAN.md`. Bộ test backend: **39 → 49 test / 9 file**, toàn bộ xanh. Còn mở: **R06, R17** (chuẩn bị sẵn, chờ sudo), **R18** (một phần — vẫn thiếu test frontend), cộng nợ UX nhỏ ở form user (xem R31).
 
 ---
 
@@ -186,7 +187,34 @@
 
 ---
 
-## Bảng tóm tắt theo mức ưu tiên (cập nhật 2026-07-19 — rà trực tiếp trên code)
+## NHÓM 7 — Đợt review sau khi chuẩn bị go-live (2026-07-25, ghi lại 2026-08-16)
+
+> Nguồn: 5 commit `ff5dd7c`→`176a94a` (chưa push lên `origin` tại thời điểm ghi tài liệu). Tất cả đều đã fix kèm test regression; ghi lại ở đây để sổ rủi ro không bỏ sót lớp lỗi tương ứng.
+>
+> Ngoài ra, commit `bb850ee` (2026-07-20) làm mới giao diện — **không phải rủi ro**, nhưng có 1 thay đổi hành vi API cần biết: `GET /api/users/options` giờ **chỉ trả người có quyền duyệt** (`document:approve:*` hoặc `*`) thay vì mọi user active, vì lọc "Đã duyệt bởi" theo người không bao giờ duyệt là vô nghĩa. Kèm theo: component `DateInput` (lịch bấm chọn dùng chung cho bộ lọc/LEAVE/uỷ quyền) và bộ design token kiểu Material 3.
+
+### [R33] ~~Người tạo tự duyệt được hồ sơ của chính mình (2 đường)~~
+- **File:** `backend/src/lib/workflow.ts` — `matchesCurrentStep()` chỉ so vị trí trong luồng, không biết `document.creatorId`.
+- **Nguy cơ (bảo mật, nghiêm trọng):** (1) **trực tiếp** — bước `DEPARTMENT` không đích danh ("bất kỳ thành viên phòng X") mà người tạo cũng thuộc phòng X → tự bấm Duyệt hồ sơ của mình; (2) **qua uỷ quyền 2 chiều** — `POST /api/delegations` không giới hạn quan hệ, nên người tạo có thể tự uỷ quyền cho người khác rồi để người đó "duyệt thay", bản chất vẫn là tự quyết hồ sơ của mình.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-25 (commit `ff5dd7c`).** Chặn tại `isCurrentApprover()` (nơi biết danh tính người GỌI API thật): `user.id === document.creatorId` → false ngay, và loại `creatorId` khỏi danh sách delegators; `findActingDelegator()` loại tương tự để audit không ghi nhầm "duyệt thay bởi chính người tạo". Cố ý KHÔNG sửa trong `matchesCurrentStep` vì tham số ở đó có thể là delegator, không phải người thực hiện. **5 test regression** (`tests/documents.selfapprove.test.ts`): trực tiếp, qua uỷ quyền, chiều ngược lại, uỷ quyền hợp lệ giữa 2 người khác vẫn chạy, và không lan sang tầng uỷ quyền thứ 2.
+
+### [R34] ~~Frontend nuốt lỗi tải dữ liệu — 9 trang hiện "rỗng" thay vì báo lỗi~~
+- **File:** 9 trang trong `frontend/src/pages/` chỉ có `.then().finally()` mà không `.catch()`.
+- **Nguy cơ:** lỗi mạng/500 khiến (a) danh sách hiện "chưa có gì" → người duyệt tưởng hết việc; (b) Dashboard trắng màn hình; (c) **nguy hiểm nhất** — form SỬA user/workflow hiện rỗng như form tạo mới, bấm Lưu là **ghi đè dữ liệu thật bằng rỗng**.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-25 (commit `624a1de`).** Trang danh sách (Dashboard, DocumentList, RoleList, DepartmentList, WorkflowList, UserList, CreateDocument): thêm `.catch` + Alert/toast "Không tải được… Thử lại", **giữ nguyên dữ liệu cũ** thay vì xoá về rỗng. Form sửa (UserForm, WorkflowForm): **chặn hẳn form** khi tải lỗi, không hiện form rỗng. Kiểm chứng bằng Playwright giả lập 500 cho cả 9 trang.
+
+### [R35] ~~`<label>` không gắn với control — screen reader bỏ qua tên trường ở mọi form~~
+- **File:** `frontend/src/components/ui/Field.tsx` — `<label>` đứng cạnh `children`, không có `htmlFor` và không bọc control.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-25 (commit `20d4e10`).** `Field` tự sinh id (`useId`) và inject `id` + `htmlFor` + `aria-describedby` + `aria-invalid` khi `children` là đúng 1 element (Input/Select/Textarea/DateInput); `DateInput` nhận thêm `id`/`aria-*` để nút mở lịch được gắn label đúng. Kiểm chứng bằng Playwright: đọc `label[for]` thật trong DOM ở AccountPage/LeaveForm, khớp đúng id từng control.
+
+### [R36] ~~Lỗi sinh PDF bị nuốt im lặng — hồ sơ báo "đã duyệt" nhưng file không tồn tại~~
+- **File:** `backend/src/lib/documentPdf.ts` — `generateLeavePdfAttachment` và `autoStampApprovedPdfs` bọc toàn thân trong `try/catch` chỉ `console.error`.
+- **Nguy cơ:** API vẫn trả 200/201 "đã duyệt" trong khi PDF gốc/đã ký không được tạo; log server production không ai đọc → không ai phát hiện cho tới lúc cần file.
+- **Trạng thái:** ✅ **ĐÃ FIX — 2026-07-25 (commit `dd22baa`).** Giữ đúng thiết kế (lỗi PDF **không** chặn nộp/duyệt) nhưng thêm audit `FILE_GENERATE_FAILED` để Admin thấy trong Nhật ký hệ thống; thread `req` qua 3 nơi gọi để audit ghi được actor/IP; thêm nhãn tiếng Việt cho action mới. Test: mock `fs.writeFileSync` throw → nộp đơn vẫn 201, có đúng 1 audit `FILE_GENERATE_FAILED` kèm nội dung lỗi.
+
+---
+
+## Bảng tóm tắt theo mức ưu tiên (cập nhật 2026-08-16 — rà trực tiếp trên code + git log)
 
 ### Còn mở
 
@@ -194,7 +222,8 @@
 |---|---|---|---|---|
 | R06 | HTTPS / Caddy | 🟠 High | 🔶 **Đã chuẩn bị sẵn** (`deploy/Caddyfile`, `DEPLOY.md`, code hỗ trợ same-origin WS) — chỉ còn chạy lệnh sudo tại máy, người dùng hiện không ở gần máy | **P1 — go-live** |
 | R17 | systemd process manager | 🟠 High | 🔶 **Đã chuẩn bị sẵn** (`deploy/etool-backend.service`) — cùng cửa sổ thao tác với R06, xem `DEPLOY.md` | **P1 — go-live** |
-| R18 | Test tự động (còn thiếu test frontend) | 🔵 Tech debt | Backend integration (39 test) + CI đã có; còn thiếu test component/e2e frontend | **Một phần** |
+| R18 | Test tự động (còn thiếu test frontend) | 🔵 Tech debt | Backend integration (**49 test / 9 file**) + CI đã có; còn thiếu test component/e2e frontend | **Một phần** |
+| — | Form user: không có lỗi inline khi username sai pattern | 🔵 Nợ UX nhỏ | Chỉ dựa vào native validation bubble (`pattern` ở `UserFormPage.tsx`), dễ tưởng nút "không phản ứng" — xem ghi chú cuối R31 | **P4** |
 
 ### Đã fix (chi tiết + cách kiểm chứng ở từng mục phía trên)
 
@@ -229,8 +258,13 @@
 | R30 | Layout PAYMENT bó hẹp 520px | Bước 41, 2026-07-19 |
 | R31 | Seed user `hr` 2 ký tự vi phạm usernameSchema | Bước 41, 2026-07-19 |
 | R32 | Trang `/audit` hiện sai thông báo khi bị 403 | Bước 42, 2026-07-19 — `ForbiddenState` dùng chung + gate client `can(user,"audit:read")` |
+| R33 | Người tạo tự duyệt hồ sơ của mình (trực tiếp + qua uỷ quyền) | 2026-07-25, commit `ff5dd7c` — **bảo mật**, 5 test regression |
+| R34 | Frontend nuốt lỗi tải dữ liệu ở 9 trang | 2026-07-25, commit `624a1de` — nguy hiểm nhất: form sửa rỗng ghi đè dữ liệu thật |
+| R35 | `<label>` không gắn control (a11y screen reader) | 2026-07-25, commit `20d4e10` — `Field` tự inject `id`/`htmlFor`/`aria-*` |
+| R36 | Lỗi sinh PDF bị nuốt im lặng | 2026-07-25, commit `dd22baa` — thêm audit `FILE_GENERATE_FAILED` |
+| — | Thu hồi/từ chối/yêu cầu sửa **không báo cho người đang chờ duyệt** | 2026-07-25, commit `176a94a` (Giai đoạn 6 — chi tiết ở `ACTION_PLAN.md` mục 6.2/6.3): `notify` dùng snapshot `document` (còn PENDING) thay vì `updated` |
 
-> ⚠️ **2026-07-19:** local `main` đang **trước `origin/main` 5 commit** (E2 preview, layout fix, D1/D4/D5, D2/D3 prep, docs) — chưa push. `git push` khi được yêu cầu.
+> ✅ **2026-08-16:** đã push toàn bộ lên `origin/main` — đợt 2026-07-25 (`ff5dd7c`→`176a94a`: R33, R34, R35, R36, Giai đoạn 6) cùng bản cập nhật tài liệu này. Local và remote trùng khớp, không còn thay đổi tồn đọng.
 
 ---
 
